@@ -9,9 +9,28 @@ validate-spec.py, workbook-manifest.py, sigma-resolve.py, and the
 package-skill.sh / sync-cortex-mirror.py harness -- originates there, with
 local modifications documented in docs/provenance.md.
 
-LICENSING STATUS: the upstream repository publishes no LICENSE file, so no
+Plugin conventions -- the single-file index.html pattern, the SDK-from-unpkg
+approach, the synthetic-fallback idea, and POST /v2/plugins registration --
+were derived from:
+
+    millersigma
+    https://github.com/cmiller-coder/millersigma
+    Copyright (c) Connor Miller
+
+    whose plugin skills in turn credit neil-oliver/sigma-plugin-skills.
+
+No code was copied from millersigma; plugins/_template/index.html is written
+from scratch, and notably corrects the SDK global those plugins use (see
+docs/plugins.md -> "The SDK global is not what most examples say").
+
+LICENSING STATUS: neither upstream repository publishes a LICENSE file, so no
 license has been granted for redistribution or modification of that code.
 This repository is therefore PRIVATE and is not distributed. Do not make it
 public, publish it to a plugin marketplace, or share it outside its current
-access list without the upstream author's explicit permission and an agreed
+access list without the upstream authors' explicit permission and an agreed
 license.
+
+Note that the plugin HOST repo (tyleraspencer/sigma-plugins) is public by
+necessity -- Sigma must fetch a plugin URL anonymously. Only first-party
+plugin HTML belongs there. Never deploy anything derived from the code above
+into it.

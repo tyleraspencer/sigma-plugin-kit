@@ -45,6 +45,7 @@ CHECKS = [
     "pivot-missing-rows-and-columns",
     "channel-exclusivity",
     "conditional-aggregate-antipattern",
+    "plugin-refs-resolve",
 ]
 
 
@@ -1247,6 +1248,94 @@ def _load_spec(path: str) -> dict:
     sys.exit(2)
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def issues_plugin_refs_resolve(spec: dict) -> list[tuple[str, str]]:
+    """Verify `kind: "plugin"` elements are wired to something real.
+
+    A plugin element that publishes cleanly and renders blank is the default
+    failure mode here, because Sigma validates neither the pluginId nor the
+    config bindings at POST time: an unregistered UUID, or a config key
+    pointing at a column that does not exist on the bound element, both
+    return 200 and then show an empty iframe.
+
+    `kind: "plugin"` is undocumented in the spec API (the spec endpoints are
+    private Beta) but verified working against a live org. Every check here is
+    on shapes observed in specs that actually render.
+    """
+    out: list[tuple[str, str]] = []
+    all_elements = _all_elements(spec)
+    by_id = {el.get("id"): el for _, el in all_elements if isinstance(el, dict)}
+
+    for idx, el in all_elements:
+        if not isinstance(el, dict) or el.get("kind") != "plugin":
+            continue
+        loc = f"elements[{idx}] (id={el.get('id')!r})"
+
+        plugin_id = el.get("pluginId")
+        if not plugin_id:
+            out.append(("fail", f"{loc}: plugin element has no `pluginId`. Register the "
+                                "plugin first: scripts/api/register-plugin.sh create ..."))
+        elif not _UUID_RE.match(str(plugin_id)):
+            out.append(("fail", f"{loc}: `pluginId` {plugin_id!r} is not a UUID. It must be "
+                                "the id returned by POST /v2/plugins, not the plugin's name "
+                                "or its hosted URL."))
+
+        config = el.get("config")
+        if not isinstance(config, dict):
+            out.append(("fail", f"{loc}: plugin element has no `config` object, so nothing "
+                                "is bound and it will render empty."))
+            continue
+
+        source = config.get("source")
+        if not isinstance(source, dict):
+            out.append(("warn", f"{loc}: `config.source` is missing. The plugin will fall "
+                                "back to whatever it renders with no data (a good plugin "
+                                "shows demo data); bind an element to show real rows."))
+            continue
+
+        src_id = source.get("elementId")
+        if source.get("kind") != "element" or not src_id:
+            out.append(("fail", f"{loc}: `config.source` must be "
+                                '{"kind": "element", "elementId": "<id>"}, got '
+                                f"{json.dumps(source)}."))
+            continue
+
+        src_el = by_id.get(src_id)
+        if src_el is None:
+            out.append(("fail", f"{loc}: `config.source.elementId` {src_id!r} does not match "
+                                "any element in this spec."))
+            continue
+
+        # Column bindings are bare column-id strings keyed by the names the
+        # plugin declared in configureEditorPanel. Anything else that is a
+        # plain string is treated as a column binding too -- that is exactly
+        # what it is.
+        src_columns = {
+            c.get("id")
+            for c in (src_el.get("columns") or [])
+            if isinstance(c, dict) and c.get("id")
+        }
+        if not src_columns:
+            continue
+
+        for key, value in config.items():
+            if key == "source" or not isinstance(value, str):
+                continue
+            if value not in src_columns:
+                out.append((
+                    "fail",
+                    f"{loc}: config binding {key!r} -> {value!r} is not a column on "
+                    f"source element {src_id!r} (kind={src_el.get('kind')!r}). "
+                    f"Available: {', '.join(sorted(src_columns))}",
+                ))
+
+    return out
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.stderr.write("usage: validate-spec.py <spec.json|spec.yaml>\n")
@@ -1275,6 +1364,7 @@ def main() -> None:
         ("pivot-missing-rows-and-columns", lambda: issues_pivot_missing_rows_and_columns(spec)),
         ("channel-exclusivity",       lambda: issues_channel_exclusivity(spec)),
         ("conditional-aggregate-antipattern", lambda: issues_conditional_aggregate_antipattern(spec)),
+        ("plugin-refs-resolve",       lambda: issues_plugin_refs_resolve(spec)),
     ]:
         for level, msg in fn():
             all_issues.append((level, tag, msg))
@@ -1289,7 +1379,10 @@ def main() -> None:
         "refs are not verified here (the server checks those on publish). "
         "`action-refs-resolve` verifies overlayId/control/table/tabbedContainer/"
         "agentId references, including inside agents[].tools[].steps[] — always "
-        "visually verify after publish."
+        "visually verify after publish. `plugin-refs-resolve` checks pluginId "
+        "shape and that config bindings name real columns on the bound element, "
+        "but cannot confirm the pluginId is registered in your org — check that "
+        "with scripts/api/register-plugin.sh list."
     )
 
     if not all_issues:

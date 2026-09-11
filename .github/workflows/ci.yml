@@ -171,6 +171,39 @@ jobs:
           python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).getinfo('_template/SKILL.md')" "$out"
           echo "packaged ok: $out"
 
+      # --- Plugin HTML gates. Both failures here are invisible at runtime:
+      # --- a plugin reading the wrong SDK global silently renders its
+      # --- synthetic fallback forever, and an unsubstituted title placeholder
+      # --- ships to a public URL. See docs/plugins.md.
+      - name: plugin HTML sanity
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, sys
+          fail = 0
+          paths = sorted(p for p in glob.glob('plugins/*/index.html'))
+          if not paths:
+              print('no plugins/*/index.html found', file=sys.stderr)
+              sys.exit(1)
+          for p in paths:
+              html = open(p, encoding='utf-8').read()
+              is_template = p.startswith('plugins/_')
+              if 'SigmaPlugin' not in html:
+                  print(f'{p}: does not reference window.SigmaPlugin -- the UMD bundle '
+                        f'defines no other global, so client would be null and the '
+                        f'plugin would silently render only its fallback.', file=sys.stderr)
+                  fail = 1
+              if '__PLUGIN_TITLE__' in html and not is_template:
+                  print(f'{p}: unsubstituted __PLUGIN_TITLE__ placeholder.', file=sys.stderr)
+                  fail = 1
+              if 'unpkg.com/@sigmacomputing/plugin' not in html:
+                  print(f'{p}: does not load the Sigma plugin SDK.', file=sys.stderr)
+                  fail = 1
+              print(f'checked {p}')
+          sys.exit(fail)
+          PY
+
       # --- doctor.sh smoke run -- confirm it runs; its exit code isn't
       # --- enforced across platforms yet (see doctor.sh's own comments) ---
       - name: doctor.sh smoke run

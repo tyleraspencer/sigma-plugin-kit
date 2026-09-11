@@ -35,6 +35,10 @@ from typing import Any
 SPEC_KEYS = {
     "name", "schemaVersion", "folderId", "pages", "controls", "description",
     "layout", "folders", "themeOverrides",
+    # Moved to the document top level by Sigma's 2026-08-10 shape change:
+    # elements flattened out of pages[], modals became overlays[], and
+    # themeOverrides was replaced by settings.theme.overrides.
+    "elements", "overlays", "settings", "agents", "kind",
     # GET-spec metadata — present on round-trip, not part of authored spec.
     "createdAt", "createdBy", "documentVersion", "latestDocumentVersion",
     "ownerId", "updatedAt", "updatedBy", "url", "workbookId",
@@ -156,6 +160,17 @@ ELEMENT_KEYS = {
         "columns", "inputMode", "filters", "conditionalFormats",
         "sort", "summary", "noDataText",
     },
+
+    # Custom-viz plugin element. Undocumented in Sigma's spec API (the spec
+    # endpoints are private Beta) but verified working against a live org.
+    # `pluginId` is the UUID from POST /v2/plugins; `config` is keyed by the
+    # names the plugin declared in configureEditorPanel, with bare column-id
+    # strings as values plus a `source` object.
+    "plugin": COMMON_KEYS | {"pluginId", "config"},
+
+    # Action-trigger element. `actions[]` carry the same effect vocabulary as
+    # agent tool steps, including input-table writeback.
+    "button": COMMON_KEYS | {"text", "appearance", "actions", "icon"},
 
     # Theme reference — a directive element, not data-bound.
     "theme": {"kind", "ref"},

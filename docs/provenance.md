@@ -55,3 +55,31 @@ wire-format and error-mode findings are in [api-notes.md](api-notes.md).
 `workbook-manifest.py` was going to be dropped as workbook-spec tooling, but
 `harvest-workbook.sh` invokes it directly to write `manifest.md` alongside a
 harvested spec, so it stayed.
+
+## The plugin pipeline (added after the initial extraction)
+
+The first extraction produced an auth + workbook-publish toolkit that could
+not build, host, register or safely embed a Sigma plugin — the thing it was
+named for. These were then written to close that gap:
+
+- `plugins/_template/index.html` — written from scratch, modelled on the
+  single-file/unpkg/synthetic-fallback pattern in `millersigma`, and
+  correcting the SDK global that library uses.
+- `scripts/new-plugin.sh`, `scripts/deploy-plugin.sh`,
+  `scripts/api/register-plugin.sh`, `scripts/build-plugin-workbook.py`.
+- `skills/sigma-plugin-pipeline/` — the operating manual, including the
+  mandatory fake-vs-real question.
+- `docs/plugins.md`.
+- `validate-spec.py` gained a 19th check, `plugin-refs-resolve`. Before it, a
+  `kind: "plugin"` element passed all 18 checks by being an unrecognized kind
+  the validator skipped — it checked nothing.
+- `workbook-manifest.py` learned `plugin` and `button` element kinds, and the
+  top-level `elements`/`overlays`/`settings`/`agents`/`kind` keys from Sigma's
+  2026-08-10 document-shape change. It previously reported all of these as
+  `⚠️ UNKNOWN`, which made `harvest-workbook.sh` print "GAPS DETECTED" on any
+  modern workbook.
+
+`POST /v2/plugins` was believed to be admin-UI-only at the start of this work.
+It is not — there is a documented five-endpoint CRUD namespace. The
+`url`-immutable-on-`PATCH` constraint is the one that shapes the pipeline's
+ordering.
