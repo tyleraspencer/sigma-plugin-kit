@@ -3,6 +3,10 @@
 #
 #   bash scripts/pipeline.sh <plugin-name> ["Display Title"] [-- <build-workbook args...>]
 #
+# Step 0 happens before this script: ask the user where the data comes from
+# (synthetic rows vs a real table) and what it should look like. The skill
+# skills/sigma-plugin-pipeline/SKILL.md has the question set.
+#
 # Steps, in the only order that works:
 #   1. scaffold plugins/<plugin-name>/ if it does not exist yet
 #   2. preflight: static checks for the silent failure modes (BLOCKING)

@@ -1,11 +1,90 @@
 ---
 name: sigma-plugin-pipeline
-description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". One command runs the whole chain: author a Vite + React plugin against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
+description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". Opens with a short intake — synthetic rows vs a real table, visual direction, and anything else specific to the request — then one command runs the whole chain: author a Vite + React plugin against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
 ---
 
 # Sigma plugin pipeline
 
+## Step 0: ask before you build
+
+**One `AskUserQuestion` call, before `pipeline.sh` runs.** Deploy and register
+are irreversible and a workbook is something the user shows other people, so
+the two things worth a round trip are the two you would otherwise guess:
+where the data comes from, and what it should look like. Guess the data source
+wrong and it's a rebuild; guess the visual direction wrong and you ship a
+plugin nobody uses.
+
+Ask **2–4 questions in a single call**, then build. One round only — don't
+come back for a second.
+
+**1. Data — always ask.** This is the one question with a fixed shape:
+
+| Option | What it means |
+| --- | --- |
+| Synthetic rows *(recommend this first)* | You invent rows that fit the topic and they're compiled into the workbook as a `kind:"sql"` VALUES literal. Self-contained, no warehouse access, works in any org. |
+| A real table | `--path DB SCHEMA TABLE` with `--dimension`/`--measure`. Ask which table, or offer to find it — then actually find it with `list-connections.sh` / `mcp-search.sh` / `mcp-describe.sh` rather than guessing names. |
+
+If they pick a real table and can't name one, don't stall: search, propose the
+best match by name, and say you'll fall back to synthetic rows if it's wrong.
+
+**2. Look and feel — always ask.** Pick the axis that most changes the code
+*for this plugin*, not a generic "what style?". The useful ones:
+
+- **Density** — compact and data-dense, or large and presentation-ready? Drives
+  font sizes, padding, how many rows survive at a small size.
+- **Color** — one accent, a categorical palette, or a value-driven scale
+  (good/bad, low/high)? Drives the whole palette and any conditional formatting.
+- **Chart form**, when the request names a goal instead of a shape — "compare
+  regions" could be bars, a map, or a dot plot.
+- **Branding** — Sigma-native look, or the user's/a third party's colors and
+  logos?
+
+**3–4. Whatever else actually changes the build.** Ask only when the answer
+would send you down a different path. The usual candidates:
+
+- **Does clicking it do anything?** A plugin that filters the rest of the
+  dashboard needs a `variable` panel entry wired to a workbook control — that's
+  structural, not a later tweak. See the variables section below.
+- **What are the entities?** Teams, regions, stages, SKUs. Real names beat
+  "Team A" and you need them before you can write the synthetic rows.
+- **Thresholds and rules** for anything computed — what counts as good, how a
+  score is weighted, where a cutoff sits.
+- **Multiple elements?** A plugin can bind more than one; ask if the request
+  hints at combining two sources.
+- **Where it lives** — an existing workbook, or a new one.
+
+### Rules for the intake
+
+- **Skip anything the request already answers.** "A bar chart of SEC team wins
+  with ESPN logos" has already told you the form, the entities and the
+  branding — ask about the data source and the color scale, and stop.
+- **Never ask four out of habit.** Two good questions beat four padded ones.
+- **Put the recommended option first** and label it, so "whatever you think" is
+  a one-click answer.
+- **If the user waves you off** — "just build it", "you pick" — take the
+  recommended option on every question, build the whole thing, and say what you
+  chose. Don't ask again.
+- **Don't ask what the scripts can answer.** Column names, the pluginId,
+  whether a registration already exists: look those up.
+
+### Answers map straight to flags
+
+```bash
+# synthetic rows, entities the user named
+bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
+
+# real table
+bash scripts/pipeline.sh sec-bars "SEC Bars" -- \
+  --path MY_DB PUBLIC GAMES --dimension TEAM --measure "Sum(WINS)"
+```
+
+Look-and-feel answers land in `plugins/<name>/src/App.jsx`. Interactivity
+answers land in `configureEditorPanel` as a `variable` entry **before** the
+first deploy.
+
 ## Run this
+
+After the intake above — the answers decide the flags.
 
 ```bash
 bash scripts/pipeline.sh <plugin-name> "Display Title"
@@ -58,7 +137,8 @@ guess. Values are visible placeholders ("Team A", "Team B").
 **Your job is to replace the placeholders with rows that mean something.**
 Invent data appropriate to the plugin and pass `--data <file.csv|json>`:
 team names for a standings chart, funnel stages for a funnel, regions for a
-map. Don't ship "Team A".
+map. Don't ship "Team A". If the intake asked which entities, use the ones
+the user named.
 
 ```bash
 bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
@@ -66,14 +146,16 @@ bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
 
 - Rows are compiled into a `SELECT ... FROM (VALUES ...)` literal published as
   a `kind:"sql"` element, so the data lives in the workbook spec.
-- **A real source only when the user names one**: `--path DB SCHEMA TABLE`
+- **A real source when the intake picks one**: `--path DB SCHEMA TABLE`
   plus `--dimension`/`--measure`. Discover it with `list-connections.sh`,
-  `mcp-search.sh`, `mcp-describe.sh` — don't guess names.
+  `mcp-search.sh`, `mcp-describe.sh` — don't guess names. If the user wants a
+  real table but can't name it, search and propose one rather than stalling.
 - **Never build an input table for fabricated rows.** It publishes empty and
   the plugin silently falls back to numbers hardcoded in its own HTML.
   `insert-rows` is rejected, row-ish fields are dropped, and there's no REST
   write endpoint. Evidence in `docs/plugins.md`.
-- Don't ask the user fake-vs-real. Build, then say what you used.
+- Synthetic-vs-real is question 1 of the intake — ask it, then build to the
+  answer. Still report which one you used and what the rows represent.
 
 ## Two gates run before anything irreversible
 
@@ -111,8 +193,8 @@ Escape hatches, for when a check is wrong rather than the plugin:
 ## Order is not negotiable
 
 ```
-build → preflight → bind harness → deploy (public URL) → register (pluginId)
-      → workbook (bind + publish) → verify
+intake (ask) → build → preflight → bind harness → deploy (public URL)
+      → register (pluginId) → workbook (bind + publish) → verify
 ```
 
 The two gates come first because **deploy and register are the irreversible

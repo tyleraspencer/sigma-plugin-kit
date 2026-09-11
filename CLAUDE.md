@@ -27,6 +27,8 @@ some other reason doesn't step on one:
 - A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px.
 - `Invalid kind: "<kind>"` means a *field* has a bad value shape.
 - HTTP 200 does not mean it worked. Check the compiled SQL.
+- Ask the intake questions before scaffolding — data source and look-and-feel
+  at minimum. Building first and asking later means a rebuild.
 - Use `scripts/pipeline.sh` rather than running the four steps by hand.
 
 ## Secrets
