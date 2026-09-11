@@ -30,6 +30,12 @@ written from code, and /v2/files has no CSV upload. See docs/plugins.md.
 Generated mode needs no GROUP BY -- you control the rows, so emit exactly the
 rows the plugin should draw, one per category.
 
+--variable-control additionally emits a list control and binds it to one of the
+plugin's `variable` editor-panel entries, which is the only channel a plugin
+has for writing a selection back into a workbook. The control's choices come
+from a data column, so the values the plugin writes are always values the
+control accepts.
+
 The SQL is Snowflake-flavoured (`::varchar`, `::number`, `::timestamp_ntz`).
 Another connection type needs the casts adjusted.
 """
@@ -311,6 +317,45 @@ def build_warehouse(args):
     return element, dim_id, mea_id
 
 
+def build_variable_control(binding, rows, header, name=None, multiple=True):
+    """A list control the plugin writes into, plus the config key that binds it.
+
+    The plugin side of this is a `variable` editor-panel entry:
+    setVariable(<binding>, ...values) pushes a selection into the control, and
+    subscribeToWorkbookVariable reads changes back -- so binding it here is
+    what turns a plugin click into something the rest of the workbook can
+    filter on.
+
+    Choices are the distinct values of `header`, so anything the plugin can
+    write is a value the control already accepts. A control element's `id` and
+    its `controlId` must DIFFER, or the publish fails with
+    `elements[N].controlId: Duplicate id`.
+    """
+    seen, values = set(), []
+    for r in rows:
+        v = r.get(header)
+        if v is None or str(v).strip() == "" or str(v) in seen:
+            continue
+        seen.add(str(v))
+        values.append(str(v))
+
+    slug = re.sub(r"[^a-z0-9]+", "-", str(binding).strip().lower()).strip("-") or "var"
+    # Keep the binding's own casing -- .title() would turn selectedSeats into
+    # "Selectedseats", and a controlId is referenced verbatim elsewhere.
+    stem = re.sub(r"[^A-Za-z0-9]", "", str(binding)) or "var"
+    control_id = "c" + stem[0].upper() + stem[1:]
+    element = {
+        "id": "ctl-" + slug,
+        "kind": "control",
+        "controlId": control_id,
+        "name": name or re.sub(r"(?<!^)(?=[A-Z])", " ", str(binding)).title(),
+        "controlType": "list",
+        "selectionMode": "multiple" if multiple else "single",
+        "source": {"kind": "manual", "valueType": "text", "values": values},
+    }
+    return element, control_id, len(values)
+
+
 def layout_xml(page_id, ordered_ids, spans):
     rows, cursor = [], 1
     for eid in ordered_ids:
@@ -359,11 +404,22 @@ def main():
                                         "editor panel. Inferred from --plugin-src, else 'label'")
     ap.add_argument("--value-key", help="plugin config key for the value, matching its "
                                         "editor panel. Inferred from --plugin-src, else 'value'")
+    ap.add_argument("--variable-control", metavar="BINDING[:COLUMN]",
+                    help="emit a list control and bind it to the plugin's `variable` "
+                         "editor-panel entry BINDING, so the plugin can write a "
+                         "selection back into the workbook. Its choices are the "
+                         "distinct values of data column COLUMN (default: the "
+                         "plugin's first column binding).")
+    ap.add_argument("--control-name", help="display name for --variable-control's "
+                                           "control (it always renders its own label)")
+    ap.add_argument("--control-single", action="store_true",
+                    help="make --variable-control single-select instead of multi")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
     notes = []
     panel_cols = []          # [(binding name, kind)] read off the plugin's panel
+    panel_entries = []       # every panel entry, for checking a --variable-control
 
     if args.plugin_src:
         src_file = find_plugin_source(args.plugin_src)
@@ -374,12 +430,14 @@ def main():
         if entries is None:
             raise SystemExit("build-plugin-workbook: could not parse "
                              "configureEditorPanel in %s" % src_file)
+        panel_entries = entries
         _, panel_cols, extra_elements = bindings_from_panel(entries)
         if extra_elements:
             notes.append("plugin declares extra element bindings (%s) that this workbook "
                          "does not populate -- bind them by hand in Sigma"
                          % ", ".join(extra_elements))
 
+    rows = None
     if args.path is not None:
         table, label_id, value_id = build_warehouse(args)
         label_key = args.label_key or "label"
@@ -438,6 +496,43 @@ def main():
     config.setdefault(label_key, label_id)
     config.setdefault(value_key, value_id)
 
+    # A control the plugin writes into. This is the whole point of a `variable`
+    # binding: a plugin can only reach the rest of a workbook through one.
+    controls = []
+    if args.variable_control:
+        binding, _, col = args.variable_control.partition(":")
+        binding = binding.strip()
+        col = col.strip()
+        if rows is None:
+            raise SystemExit("build-plugin-workbook: --variable-control needs generated "
+                             "rows to take the control's choices from; it is not "
+                             "supported with --path.")
+        if panel_entries:
+            declared = [e["name"] for e in panel_entries if e["type"] == "variable"]
+            if binding not in declared:
+                raise SystemExit(
+                    "build-plugin-workbook: the plugin declares no `variable` entry "
+                    "named %r.\n  Declared: %s\n  The name must match the plugin's "
+                    "configureEditorPanel exactly, or the binding is silently absent."
+                    % (binding, ", ".join(declared) or "(none)"))
+        if not col:
+            col = panel_cols[0][0] if panel_cols else None
+        if not col or col not in colmap:
+            raise SystemExit("build-plugin-workbook: --variable-control column %r is "
+                             "not in the data.\n  Available: %s"
+                             % (col, ", ".join(colmap)))
+        control, control_id, n_values = build_variable_control(
+            binding, rows, col, name=args.control_name,
+            multiple=not args.control_single)
+        controls.append(control)
+        # The canonical shape Sigma itself stores, read back off a workbook it
+        # had normalized: a control binding is an object, unlike a column
+        # binding, which is a bare column-id string.
+        config[binding] = {"kind": "control", "controlId": control_id}
+        notes.append("control %s (%s, %d choice(s) from %r) bound to the plugin's "
+                     "`%s` variable" % (control_id, control["selectionMode"],
+                                        n_values, col, binding))
+
     plugin = {"id": "plug-viz", "kind": "plugin", "pluginId": args.plugin_id,
               "config": config}
 
@@ -447,13 +542,16 @@ def main():
     title = {"id": "txt-title", "kind": "text", "body": "**%s**" % args.name}
 
     page_id = "page-plugin"
+    ordered = ["txt-title"] + [c["id"] for c in controls] + ["plug-viz", "tbl-data"]
+    spans = {"txt-title": 3, "plug-viz": 17, "tbl-data": 12}
+    for c in controls:
+        spans[c["id"]] = 3
     spec = {
         "name": args.name,
         "schemaVersion": 1,
         "pages": [{"id": page_id, "name": "Plugin"}],
-        "elements": [title, plugin, table],
-        "layout": layout_xml(page_id, ["txt-title", "plug-viz", "tbl-data"],
-                             {"txt-title": 3, "plug-viz": 17, "tbl-data": 12}),
+        "elements": [title] + controls + [plugin, table],
+        "layout": layout_xml(page_id, ordered, spans),
     }
     # folderId is effectively required on POST; omitting it surfaces as
     # `Expecting UUID at 0.folderId` inside a large union-type error.
