@@ -1,177 +1,124 @@
 ---
 name: sigma-plugin-pipeline
-description: Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". Runs the whole chain: author a single-file index.html against the @sigmacomputing/plugin SDK, deploy it to public GitHub Pages, register it via POST /v2/plugins to get a pluginId, then generate and publish a workbook with a plugin element bound to its data. Always asks first whether the workbook should use fake seeded data or a real warehouse table. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.
+description: Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". One command runs the whole chain: author a single-file index.html against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.
 ---
 
 # Sigma plugin pipeline
 
-Four steps, in this order, because each one's output is the next one's input:
+## Just run this
 
+```bash
+bash scripts/pipeline.sh <plugin-name> "Display Title"
 ```
-build  →  deploy (public URL)  →  register (pluginId)  →  workbook (bind + publish)
+
+Scaffolds, deploys to public Pages, registers (or reuses an existing
+registration), generates a workbook bound to real data, publishes, verifies
+the compiled SQL, and prints the workbook URL. Override the data source by
+passing anything after `--`:
+
+```bash
+bash scripts/pipeline.sh my-viz "My Viz" -- \
+  --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-Never reorder deploy and register. **Sigma's `PATCH /v2/plugins/{id}` cannot
-change a plugin's `url`.** Registering a URL that turns out not to serve means
-delete + re-create, which mints a *different* `pluginId` and silently breaks
-every workbook already pointing at the old one.
+Then edit `plugins/<plugin-name>/index.html` and re-run. Re-running reuses the
+registration rather than minting a second `pluginId`.
 
-## Step 0 — the data question. Ask it before building anything.
+Do the steps by hand only when something fails or the shape is unusual.
 
-Before writing a plugin or touching the API, ask the user — with
-`AskUserQuestion` if available, otherwise in plain text, **ending the turn**
-immediately after so they actually answer:
+## Data: default to the sample retail table. Do not build input tables.
 
-> Should the workbook use **fake seeded data** or a **real table / dataset**?
+The default source is **verified and hardcoded**: connection
+`Sigma Sample Database`, warehouse path
+`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`, grouped by
+`STORE_REGION` with `Sum(PRICE * QUANTITY)` as `Revenue`. Use it unless the
+user names a different source. **Do not ask which data to use** — just build
+on the default and say which source you used.
 
-Default to **fake**. Offer these as the options:
+Useful columns on that table: `STORE_REGION`, `STORE_STATE`, `STORE_CITY`,
+`STORE_NAME`, `PRODUCT_TYPE`, `PRODUCT_FAMILY`, `PRODUCT_LINE`, `BRAND`,
+`PRODUCT_NAME`, `SKU_NUMBER`, `CUSTOMER_NAME`, `DATE`, `QUANTITY`, `PRICE`,
+`COST`, `ORDER_NUMBER`.
 
-- **Fake (default)** — the generated workbook gets an `input-table` element
-  plus a "Seed demo data" button. The rows land in Sigma as a real, editable
-  table, so the plugin exercises the same data path it will use in production
-  and a reviewer can change the numbers in the UI. Needs only a connection id.
-- **Real** — the workbook gets a `table` element on a warehouse table, and the
-  plugin binds to that. Needs a connection, a `DATABASE SCHEMA TABLE` path, and
-  the column names.
+**Never generate an input table for synthetic data.** It cannot work: Sigma
+has no way to populate an input table from a spec (`insert-rows` is a runtime
+effect, one row each, and is currently rejected by the spec API), and no
+source kind accepts literal rows — `sql`, `custom-sql`, `customSql`,
+`warehouse-sql`, `manual` and `inline` were all probed and refused. An input
+table publishes empty, the plugin falls through to its own synthetic
+fallback, and you ship a chart showing hardcoded numbers. Bind to a real
+table instead.
 
-Do not assume the answer from context and do not proceed on silence. If they
-pick real, discover what is actually available rather than guessing at names:
+For a different real source, discover it rather than guessing names:
 
 ```bash
 bash scripts/api/list-connections.sh
-bash scripts/api/probe-schema-tables.sh <connection-id>
-bash scripts/api/list-table-columns.sh <connection-id> DB SCHEMA TABLE
+bash scripts/api/mcp-search.sh "<topic>" --types table --limit 5
+bash scripts/api/mcp-describe.sh table <inodeId>      # exact columns + path
 ```
 
-## Step 1 — build
+## Two rules that will save you a failed publish
 
-```bash
-bash scripts/new-plugin.sh <plugin-name> "Display Title"
+**1. Copy element shapes from `docs/elements-known-good.md`. Never invent
+field names.** Every verified shape is there. A text element's content field
+is `body`, not `text`/`variant` — getting that wrong costs a round trip and
+the error blames the element kind.
+
+**2. Read `Invalid kind: "<kind>"` as "a field has the wrong value shape",**
+not "this element kind is unsupported". Sigma rejects known fields carrying
+bad shapes and silently drops unknown field names. Bisect from a known-good
+shape, adding one field at a time. The message contains no further hints, so
+do not re-read it looking for them. A *structural* error instead (e.g. "an
+action must have at least one effect") means that part parsed fine.
+
+## HTTP 200 does not mean it works
+
+Two silent failures to check for, both of which return success:
+
+- A **bare column reference** against a warehouse source publishes fine and
+  compiles to literal `'Unknown column "[PRICE]"'` in the SQL. Warehouse
+  columns must be `[TABLE/COLUMN]`. `pipeline.sh` greps the compiled SQL and
+  fails on this; `validate-spec.py` does **not** catch it.
+- A wrong `pluginId` or a config binding naming a nonexistent column both
+  publish clean and render an empty iframe. `validate-spec.py`'s
+  `plugin-refs-resolve` catches the binding case; only
+  `register-plugin.sh get "$PID"` confirms the plugin is really registered.
+
+**If the plugin shows its demo data in Sigma, the binding is wrong.** That
+fallback is exactly what renders when nothing resolves.
+
+## Order is not negotiable
+
+```
+build → deploy (public URL) → register (pluginId) → workbook (bind + publish)
 ```
 
-Scaffolds `plugins/<plugin-name>/index.html` from the template: SDK from
-unpkg, `configureEditorPanel`, `config.subscribe` +
-`subscribeToElementData`, and a synthetic fallback so the frame is never
-blank. Then edit two things:
+`PATCH /v2/plugins/{id}` **cannot change `url`**. Registering a URL that
+doesn't serve means delete + re-create, a new `pluginId`, and every workbook
+referencing the old one silently broken. Deploy and confirm `200 text/html`
+first — `deploy-plugin.sh` polls, and `register-plugin.sh create` re-checks.
 
-- **`DEFS`** — the editor-panel bindings. Each `name` is the key that arrives
-  in the config object *and* the key a workbook spec's plugin `config` must
-  use. Keep them stable; renaming one silently unbinds existing workbooks.
-- **`draw()`** and **`synth()`** — the visual, and the demo data behind it.
+Hosting must be a **public** repo (`tyleraspencer/sigma-plugins`): Sigma
+fetches the URL anonymously for the iframe, so a private repo's Pages output
+will not serve. Use Pages, not jsDelivr, which serves `.html` as `text/plain`.
 
-Two runtime facts that shape any plugin you write here:
+## Writing the plugin
 
+The SDK's UMD bundle defines **one** global: `window.SigmaPlugin`, client at
+`SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is a
+widely-copied pattern that **no published bundle defines** — a plugin reading
+it gets `client === null` and renders its fallback forever, looking fine in a
+screenshot. CI gates this.
+
+- `configureEditorPanel(DEFS)` — each `name` is the config key *and* the key
+  a workbook spec's plugin `config` must use. Renaming one silently unbinds
+  existing workbooks.
 - `subscribeToElementData` yields an object **keyed by column ID**, each value
-  a parallel array of cells — not an array of row objects. Zip by index.
-- Always release the previous element subscription before opening a new one.
-  Re-binding the source otherwise leaks a listener that keeps overwriting your
-  state with the old element's rows.
+  a parallel array of cells — not row objects. Zip by index.
+- Release the previous subscription before opening a new one, or re-binding
+  leaks a listener that overwrites state with the old element's rows.
+- Keep the synthetic fallback deterministic, and badge it visibly so nobody
+  mistakes it for real data.
 
-The file runs with no Sigma client at all, so open it in a browser to iterate.
-
-## Step 2 — deploy
-
-```bash
-URL=$(bash scripts/deploy-plugin.sh <plugin-name>)
-```
-
-Pushes to the **public** host repo (`tyleraspencer/sigma-plugins`) and polls
-the live URL until it returns `200 text/html`, then prints it.
-
-It must be a public repo: Sigma fetches the URL anonymously into an iframe, so
-a private repo's Pages output will not serve. And it must be GitHub Pages, not
-jsDelivr — jsDelivr returns `.html` as `text/plain`, which renders the plugin
-as raw source text and hangs PNG export. The script fails on both conditions
-rather than letting you register a bad URL.
-
-## Step 3 — register
-
-```bash
-PID=$(bash scripts/api/register-plugin.sh create "Display Title" "$URL")
-```
-
-Prints only the `pluginId` on stdout. It re-checks the URL first, for the
-immutability reason above. Writes need Admin or the **Manage plugins**
-permission; a 403 here means an org admin has to register it or grant that.
-
-Already registered? `register-plugin.sh list` or `id-for "<exact name>"`.
-
-## Step 4 — workbook
-
-```bash
-# fake (default)
-python3 scripts/build-plugin-workbook.py --name "<Workbook Name>" \
-  --plugin-id "$PID" --data-mode fake \
-  --connection-id <conn> --data rows.json \
-  --bind <plugin-key>=<Column Name> --bind <plugin-key>=<Column Name> \
-  --out spec.json
-
-# real
-python3 scripts/build-plugin-workbook.py --name "<Workbook Name>" \
-  --plugin-id "$PID" --data-mode real \
-  --connection-id <conn> --path DB SCHEMA TABLE --columns COL_A COL_B \
-  --bind <plugin-key>=COL_A --bind <plugin-key>=COL_B \
-  --out spec.json
-
-bash scripts/api/publish-workbook.sh post spec.json
-```
-
-`publish-workbook.sh` validates the spec, wraps it in the `document` envelope,
-POSTs it, and then runs the schema audit automatically.
-
-`--bind` maps a `DEFS` key to a column and is checked against the columns the
-generator just created, so a typo fails locally instead of rendering an empty
-plugin in Sigma.
-
-**Fake mode needs one manual click.** Sigma cannot pre-populate an input table
-from a spec — `insert-rows` is a runtime action effect, and one effect inserts
-exactly one row. The generated workbook therefore carries a "Seed demo data"
-button holding one effect per row. Tell the user plainly: open the workbook and
-click it once. Don't report the build as finished without saying so.
-
-**If POST fails with `Invalid kind: "button"`, add `--no-seed` and re-run.**
-`insert-rows` is rejected outright on papercrane as of 2026-09-11 (bisected:
-the same button carrying `set-control-value` publishes fine). `--no-seed`
-emits the input table with no button; it publishes cleanly and the rows get
-pasted in by hand. Full evidence in `docs/plugins.md`.
-
-**Read `Invalid kind: "<kind>"` as "a field has the wrong value shape",** not
-as "this element kind is unsupported". Sigma rejects known fields with bad
-shapes and silently drops unknown field names. A text element's content field
-is `body`, not `text`/`variant`, and getting that wrong reports
-`Invalid kind: "text"`. Bisect from a known-good element.
-
-## Verify before claiming success
-
-A plugin element that publishes cleanly and renders blank is the normal failure
-here — Sigma validates neither the `pluginId` nor the config bindings at POST
-time, so both return 200 and then show an empty iframe.
-
-`validate-spec.py`'s `plugin-refs-resolve` catches a malformed `pluginId`, a
-bad `config.source`, and bindings naming columns that don't exist. It **cannot**
-confirm the `pluginId` is registered in this org — check that separately:
-
-```bash
-bash scripts/api/register-plugin.sh get "$PID"
-bash scripts/api/verify-workbook.sh <workbook-id>
-```
-
-Then look at the workbook. If the plugin shows its demo data in Sigma, the
-binding is wrong — that fallback is exactly what renders when nothing resolves.
-
-## Gotchas that will cost you a rebuild
-
-- **`url` is immutable on PATCH.** Deploy and verify before registering.
-- **Re-publishing a harvested spec** that contains an input table: strip every
-  system column (`ID`, `CREATED_AT`, `CREATED_BY`, `UPDATED_AT`, `UPDATED_BY`)
-  back to a bare `{"id": ...}` first. Sigma adds a `formula` field to them on
-  GET, and re-submitting that fails PUT with "system column `ID` cannot set
-  `type` or `formula`". Every time, not just the first.
-- **Controls cannot bind to a plugin's `config` directly.** Plugin config binds
-  columns, and controls only parametrize filter values. To drive a plugin from
-  a control, add one constant column to the plugin's source element whose
-  formula is a bare `[<controlId>]` reference, then bind that column.
-- **A `linked`-source input table rejects `delete-rows`** (`empty`-source is
-  fine).
-- **Input-table column order is not preserved** on GET-back. Diff by column
-  `id`, never by array position.
+Full detail: `docs/plugins.md`. Verified shapes:
+`docs/elements-known-good.md`.

@@ -11,20 +11,24 @@ build  →  deploy (public URL)  →  register (pluginId)  →  workbook (bind +
 ```bash
 bash scripts/doctor.sh                                  # check the host
 export SIGMA_BASE_URL=https://api.sigmacomputing.com
-eval "$(scripts/api/browser-login.sh)"                  # browser sign-in
+eval "$(scripts/api/browser-login.sh)"                  # browser sign-in (needs a tty)
 
-bash scripts/new-plugin.sh my-viz "My Viz"              # 1. build
-URL=$(bash scripts/deploy-plugin.sh my-viz)             # 2. deploy -> public URL
-PID=$(bash scripts/api/register-plugin.sh create "My Viz" "$URL")  # 3. register
-
-python3 scripts/build-plugin-workbook.py --name "My Viz Demo" \
-  --plugin-id "$PID" --data-mode fake --connection-id <conn> \
-  --data rows.json --bind label=Region --bind value=Revenue --out spec.json
-bash scripts/api/publish-workbook.sh post spec.json     # 4. workbook
+bash scripts/pipeline.sh my-viz "My Viz"                # all four steps
 ```
 
-Full walkthrough, including every gotcha that costs a rebuild:
-**[docs/plugins.md](docs/plugins.md)**.
+That scaffolds, deploys, registers, generates a workbook bound to real data,
+publishes, verifies the compiled SQL, and prints the workbook URL. Re-running
+reuses the existing registration instead of minting a second `pluginId`.
+Override the data source after `--`:
+
+```bash
+bash scripts/pipeline.sh my-viz "My Viz" -- \
+  --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
+```
+
+Full walkthrough and every gotcha that costs a rebuild:
+**[docs/plugins.md](docs/plugins.md)**. Verified element shapes to copy from
+rather than invent: **[docs/elements-known-good.md](docs/elements-known-good.md)**.
 
 ## Three things that will bite you
 
@@ -45,23 +49,26 @@ anonymously into an iframe, so a private repo's Pages output will not serve.
 This toolkit is private; plugins deploy to `tyleraspencer/sigma-plugins`.
 Use GitHub Pages, not jsDelivr — jsDelivr serves `.html` as `text/plain`.
 
-## Fake data or a real table
+## Data
 
-`build-plugin-workbook.py --data-mode` decides how the plugin gets data, and
-the `sigma-plugin-pipeline` skill always asks before building.
+Defaults to a verified real source, so the common case needs no data flags:
+connection **Sigma Sample Database**, path
+`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`, grouped by
+`STORE_REGION` with `Sum(PRICE * QUANTITY)` as `Revenue`. Override with
+`--connection-id`, `--path`, `--dimension`, `--measure`, `--measure-name`.
 
-- **`fake`** (default) — generates an `input-table` element plus a "Seed demo
-  data" button, and binds the plugin to it. The rows become a real, editable
-  Sigma table, so the plugin exercises its production data path and a reviewer
-  can change the numbers. Sigma can't pre-populate an input table from a spec
-  (`insert-rows` is a runtime effect, one row per effect), so **someone must
-  open the workbook and click the button once.**
-- **`real`** — generates a `table` element on a warehouse table and binds the
-  plugin to that. Discover targets with `list-connections.sh`,
-  `probe-schema-tables.sh`, `list-table-columns.sh`.
+Measure expressions take **bare** column names and get qualified to
+`[TABLE/COLUMN]` automatically — which matters, because a bare `[PRICE]` on a
+warehouse source publishes with HTTP 200 and then compiles to literal
+`'Unknown column "[PRICE]"'` in the SQL.
 
-Both modes need `--connection-id`: even a fake-data input table is
-warehouse-backed.
+**There is no synthetic/input-table mode, deliberately.** Sigma cannot
+populate an input table from a spec: `insert-rows` is a runtime effect (one
+row each) and is currently rejected by the spec API, and no source kind
+accepts literal rows — `sql`, `custom-sql`, `customSql`, `warehouse-sql`,
+`manual` and `inline` were all probed and refused. An input table publishes
+empty, the plugin falls back to its own hardcoded demo data, and you ship a
+chart of fake numbers that looks real. Bind to a real table.
 
 ## Layout
 
@@ -70,6 +77,7 @@ plugins/
   _template/index.html        canonical single-file plugin (SDK, bindings, fallback)
   <name>/index.html           your plugins, deployed to the public host repo
 scripts/
+  pipeline.sh                 ALL FOUR STEPS in one command; start here
   new-plugin.sh               scaffold plugins/<name>/ from the template
   deploy-plugin.sh            push to public Pages, poll until it serves
   build-plugin-workbook.py    generate a workbook spec around a plugin element
@@ -90,10 +98,11 @@ scripts/
     list-*, search-*, probe-* discovery
     mcp-search.sh, mcp-describe.sh   richer search/DDL; needs user OAuth
 skills/
-  sigma-plugin-pipeline/      drives the pipeline, asks fake-vs-real first
+  sigma-plugin-pipeline/      the operating manual for the pipeline
   _template/                  skeleton for a new skill
 docs/
   plugins.md                  the pipeline, the SDK, every gotcha
+  elements-known-good.md      verified element shapes -- copy, don't invent
   auth.md                    auth ladder, credential tiers, Cowork, egress hosts
   api-notes.md               wire formats and error modes
   plugin-harness.md          Claude Code plugin manifests, mirror, packaging

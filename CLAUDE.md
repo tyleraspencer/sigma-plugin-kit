@@ -24,8 +24,17 @@ Extracted from `ryan-workbook-skill` with plugin conventions from
   workbooks.
 - **Hosting must be a public repo.** Sigma fetches the URL anonymously; a
   private repo's Pages output will not serve. This repo is private on purpose.
-- **Always ask fake-vs-real** before generating a workbook. Default fake. Fake
-  mode needs one manual click on the seed button — say so when handing it over.
+- **Bind to real data. Never build an input table for synthetic rows.** Sigma
+  cannot populate one from a spec, so it publishes empty and the plugin falls
+  back to hardcoded numbers that look real. The default source is verified:
+  `Sigma Sample Database` →
+  `RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`.
+- **Copy element shapes from `docs/elements-known-good.md`; never invent field
+  names.** `Invalid kind: "<kind>"` means a *field* has a bad value shape, not
+  that the kind is unsupported — Sigma drops unknown field names silently.
+- **HTTP 200 does not mean it works.** A bare `[COLUMN]` on a warehouse source
+  publishes clean and compiles to `Unknown column`. Check the compiled SQL.
+- **Use `scripts/pipeline.sh`** rather than running the four steps by hand.
 
 ## Secrets
 

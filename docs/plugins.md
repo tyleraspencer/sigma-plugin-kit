@@ -7,13 +7,18 @@ build  →  deploy (public URL)  →  register (pluginId)  →  workbook (bind +
 ```
 
 ```bash
-bash scripts/new-plugin.sh my-viz "My Viz"            # 1. build
-URL=$(bash scripts/deploy-plugin.sh my-viz)            # 2. deploy
+bash scripts/pipeline.sh my-viz "My Viz"     # all four steps, one command
+```
+
+Or step by step, when something needs unpicking:
+
+```bash
+bash scripts/new-plugin.sh my-viz "My Viz"                          # 1. build
+URL=$(bash scripts/deploy-plugin.sh my-viz)                         # 2. deploy
 PID=$(bash scripts/api/register-plugin.sh create "My Viz" "$URL")   # 3. register
 python3 scripts/build-plugin-workbook.py --name "My Viz Demo" \
-  --plugin-id "$PID" --data-mode fake --connection-id <conn> \
-  --data rows.json --bind label=Region --bind value=Revenue --out spec.json
-bash scripts/api/publish-workbook.sh post spec.json    # 4. workbook
+  --plugin-id "$PID" --folder-id <folder> --out spec.json           # 4. workbook
+bash scripts/api/publish-workbook.sh post spec.json
 ```
 
 **Never register before deploying.** `PATCH /v2/plugins/{id}` cannot change a
@@ -180,47 +185,68 @@ message that blames the element kind rather than the field:
 `folderId` is effectively required on POST — omitting it surfaces as
 `Expecting UUID at 0.folderId` inside a large union-type error.
 
-### Fake data vs. a real table
+### Data: bind to a real table
 
-`--data-mode fake` (the default) builds an `input-table` element plus a
-**"Seed demo data" button**, and binds the plugin to the input table. The rows
-land in Sigma as a real, editable table, so the plugin exercises the same data
-path it will use in production and a reviewer can change the numbers in the UI.
+The generator defaults to a **verified real source**, so the common case needs
+no data flags:
 
-Sigma cannot pre-populate an input table from a spec: `insert-rows` is a
-runtime action effect and **one effect inserts exactly one row**. So the
-generated button carries one effect per row, and someone must open the
-workbook and click it once. Say so when you hand the workbook over.
+| Flag | Default |
+|---|---|
+| `--connection-id` | `bee6615c-…` (Sigma Sample Database) |
+| `--path` | `RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA` |
+| `--dimension` | `STORE_REGION` |
+| `--measure` | `Sum(PRICE * QUANTITY)` |
+| `--measure-name` | `Revenue` |
 
-> **`insert-rows` is currently rejected on papercrane** (verified live
-> 2026-09-11). POST fails with `document.elements[N]: Invalid kind: "button"`
-> — a message that blames the element kind rather than the effect. Bisected
-> against a known-good baseline: a button carrying `set-control-value`
-> publishes fine, and the same button carrying `insert-rows` does not. Every
-> shape was tried — `values` as dynamic-value objects and as plain scalars, a
-> `rows[]` array, `elementId` instead of `table`, no `values` at all,
-> `inputMode: "edit"` — all fail identically. `delete-rows` and `open-url`
-> fail the same way, so it is the effect object, not `insert-rows` alone.
-> An empty `effects: []` gives a *different*, structural error ("an action
-> must have at least one effect"), which proves the surrounding
-> `actions`/`effects` shape is parsed correctly.
->
-> The upstream reference documents these as POST-verified on 2026-08-04, so
-> this looks like drift or org-level gating rather than a wrong shape.
->
-> **Workaround:** `--no-seed` emits the input table with no button. It
-> publishes cleanly; paste the rows into the table in the UI. `--data` is
-> still required, since it defines the columns and their types.
+It emits a grouped `table` element (see
+[elements-known-good.md](elements-known-good.md)) and binds the plugin to it.
+Measure and dimension expressions take **bare** column names; the generator
+qualifies them to `[TABLE/COLUMN]`.
 
-Even a fake-data input table is warehouse-backed, so `--connection-id` is
-required in both modes (`source: {kind: "empty", connectionId}`).
+Other useful columns on the default table: `STORE_STATE`, `STORE_CITY`,
+`STORE_NAME`, `PRODUCT_TYPE`, `PRODUCT_FAMILY`, `PRODUCT_LINE`, `BRAND`,
+`PRODUCT_NAME`, `SKU_NUMBER`, `CUSTOMER_NAME`, `DATE`, `QUANTITY`, `PRICE`,
+`COST`, `ORDER_NUMBER`.
 
-`--data-mode real` builds a `table` element on
-`{kind: "warehouse-table", connectionId, path: [DB, SCHEMA, TABLE]}` and binds
-the plugin to it. Warehouse column formulas reference the **last path
-segment** — path `["SALES_DB","PUBLIC","ORDERS"]` gives `[ORDERS/revenue]`.
-Discover what exists with `list-connections.sh`, `probe-schema-tables.sh` and
-`list-table-columns.sh`.
+For a different source, discover it instead of guessing:
+
+```bash
+bash scripts/api/list-connections.sh
+bash scripts/api/mcp-search.sh "<topic>" --types table --limit 5
+bash scripts/api/mcp-describe.sh table <inodeId>   # exact columns + warehouse path
+```
+
+Warehouse column formulas reference the **last path segment**; both the raw
+column name and its display name compile identically (`[T/STORE_REGION]` and
+`[T/Store Region]`). A **bare** `[STORE_REGION]` does not — see "The
+200-that-lies" in elements-known-good.md.
+
+### Why there is no synthetic/input-table mode
+
+There is **no way to put literal rows into a workbook from a spec.** Both
+routes are closed:
+
+- **`insert-rows` is rejected** (verified live 2026-09-11). POST fails with
+  `document.elements[N]: Invalid kind: "button"` — blaming the element kind
+  rather than the effect. Bisected against a known-good baseline: a button
+  carrying `set-control-value` publishes fine; the same button carrying
+  `insert-rows` does not. Every shape fails identically — `values` as
+  dynamic-value objects and as plain scalars, a `rows[]` array, `elementId`
+  instead of `table`, no `values`, `inputMode: "edit"`. `delete-rows` and
+  `open-url` fail the same way, so it is the effect object, not `insert-rows`
+  alone. An empty `effects: []` gives a *different*, structural error ("an
+  action must have at least one effect"), proving the surrounding
+  `actions`/`effects` shape parses correctly. The upstream reference
+  documents these as POST-verified 2026-08-04, so this is drift or org-level
+  gating rather than a wrong shape.
+- **No source kind accepts literal rows.** `sql`, `custom-sql`, `customSql`,
+  `warehouse-sql`, `manual` and `inline` were all probed on a table element
+  and all rejected with `Invalid kind: "table"`.
+
+So an input table publishes **empty**, the plugin falls through to its own
+synthetic fallback, and you ship a chart whose numbers are hardcoded in the
+HTML while looking entirely real. That is the trap this mode was removed to
+avoid. Bind to a real table.
 
 ## Verifying, and the failures that hide
 
