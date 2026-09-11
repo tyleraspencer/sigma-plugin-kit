@@ -11,9 +11,11 @@ description: 'Use when the user wants to build, deploy, host, register or embed 
 bash scripts/pipeline.sh <plugin-name> "Display Title"
 ```
 
-Scaffolds, deploys to public Pages, registers (reusing an existing
-registration by name), generates a workbook bound to real data, publishes,
-verifies the compiled SQL, prints the workbook URL. Override the data source
+Scaffolds, preflights, generates a bind harness, deploys to public Pages,
+registers (reusing an existing registration by name), generates a workbook
+bound to real data, publishes, verifies the compiled SQL, prints the workbook
+URL. The preflight is blocking and runs before deploy, so a plugin with a
+known silent-failure mode never gets a pluginId. Override the data source
 after `--`:
 
 ```bash
@@ -70,11 +72,48 @@ bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
   write endpoint. Evidence in `docs/plugins.md`.
 - Don't ask the user fake-vs-real. Build, then say what you used.
 
+## Two gates run before anything irreversible
+
+`pipeline.sh` runs both for you. Reach for them by hand while iterating.
+
+```bash
+python3 scripts/preflight-plugin.py <name> [--data FILE]      # static, blocking
+python3 scripts/verify-plugin-binding.py <name> [--data FILE] # renders it twice
+```
+
+**`preflight-plugin.py` is the one that stops a bad deploy.** Every check in it
+is a mode where the plugin deploys clean, publishes clean, renders its own
+fallback data and screenshots perfectly -- no status code catches any of them.
+It imports `build-plugin-workbook.py`'s *own* panel parser rather than
+re-implementing one, so authoring and building cannot silently disagree about
+the binding contract. It also checks that every `column` binding name has a
+matching header in `--data`, which is the thing that makes all the bindings
+resolve instead of just the first two.
+
+**`verify-plugin-binding.py` is the only thing that proves the plugin renders
+bound data.** It generates a local page that runs the plugin twice in isolated
+iframes -- once with nothing bound, once with the real rows in Sigma's
+column-keyed parallel-array shape -- and fails if the two renders are
+identical, because that means the plugin is ignoring its bindings. No Sigma
+login, no deploy, no network. It also reports which declared bindings the
+plugin actually *read*, via a Proxy on the config object.
+
+Open the URL it prints. The verdict lands in the page, in `document.title`
+(`HARNESS PASS` / `HARNESS FAIL`) and in `window.__HARNESS__`, so one
+`javascript_tool` call or a glance at the tab title is enough.
+
+Escape hatches, for when a check is wrong rather than the plugin:
+`SIGMA_SKIP_PREFLIGHT=1`, `SIGMA_SKIP_BINDTEST=1`.
+
 ## Order is not negotiable
 
 ```
-build → deploy (public URL) → register (pluginId) → workbook (bind + publish)
+build → preflight → bind harness → deploy (public URL) → register (pluginId)
+      → workbook (bind + publish) → verify
 ```
+
+The two gates come first because **deploy and register are the irreversible
+steps.**
 
 `PATCH /v2/plugins/{id}` **cannot change `url`**. Registering a URL that
 doesn't serve means delete + re-create, a new `pluginId`, and every workbook
@@ -112,6 +151,11 @@ Both of these publish clean and fail silently:
 
 **If the plugin shows its demo data in Sigma, the binding is wrong** — that
 fallback is what renders when nothing resolves. Check before reporting success.
+
+Checking that used to need eyes on the rendered iframe, which needs a Sigma
+login the in-app browser does not have. It does not any more:
+`verify-plugin-binding.py` reproduces the same fallback-vs-bound distinction
+locally, before deploy. Run it rather than inferring success from a 200.
 
 ## Writing the plugin
 
