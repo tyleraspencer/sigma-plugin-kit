@@ -86,8 +86,13 @@ fi
 say "4/5 workbook"
 spec="$(mktemp "${TMPDIR:-/tmp}/plugin-spec.XXXXXX.json")"
 trap 'rm -f "$spec"' EXIT
+# --plugin-src lets the generator read this plugin's own configureEditorPanel
+# and synthesize columns that match its bindings, so the data fits the plugin
+# instead of being generic. Anything in extra_args wins -- notably --data,
+# which is what you want for rows that actually mean something.
 "${SIGMA_PYTHON:-python3}" scripts/build-plugin-workbook.py \
   --name "$title" --plugin-id "$pid" --folder-id "$FOLDER_ID" \
+  --plugin-src "plugins/$name" \
   --out "$spec" "${extra_args[@]+"${extra_args[@]}"}" >&2
 
 publish_out="$(bash scripts/api/publish-workbook.sh post "$spec" 2>&1)" || {

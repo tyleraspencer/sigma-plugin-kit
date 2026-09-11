@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 """Generate a workbook spec that hosts a registered plugin, bound to data.
 
-Two source modes. **Generated is the default** -- no data flags needed:
+Data comes from one of three places, in priority order:
 
-    build-plugin-workbook.py --name "My Viz Demo" --plugin-id <uuid>
+  --data FILE    Rows you supply: a .csv/.tsv, or a JSON array of objects.
+                 **Prefer this.** Invent rows that mean something for the
+                 plugin at hand -- team names for a standings chart, funnel
+                 stages for a funnel. Types are inferred per column.
 
-  generated  Rows are compiled into a `SELECT ... FROM (VALUES ...)` literal
-             and published as a `kind: "sql"` table element, so the data lives
-             in the workbook spec itself. This is the only API route for
-             fabricated rows: input tables cannot be written from code, and
-             `/v2/files` has no CSV upload, so a CSV-backed element can't be
-             produced either. Supply your own rows with --data, or get the
-             built-in sample shape (text / float / int / date / boolean).
+  --plugin-src   Rows synthesized from the plugin's own editor panel. The
+                 script reads its `configureEditorPanel` declaration, takes the
+                 column bindings and their `allowedTypes`, and generates
+                 correctly-typed columns named to match -- so the plugin binds
+                 with no guesswork. Values are obvious placeholders ("Team A",
+                 "Team B"): the *shape* is right, the meaning is not.
+                 pipeline.sh passes this automatically.
 
-  warehouse  `--path DB SCHEMA TABLE` binds a real table instead, grouped by
-             --dimension with --measure aggregated over it.
+  --path         A real warehouse table instead, grouped by --dimension with
+                 --measure aggregated over it.
 
-Generated mode needs no GROUP BY: you control the rows, so emit exactly the
+There is no built-in row set on purpose. A generic default ("Alice Johnson",
+"SCORE") is the thing everyone falls into and nobody notices is meaningless.
+
+Generated rows are compiled into a `SELECT ... FROM (VALUES ...)` literal and
+published as a `kind: "sql"` table element, so the data lives in the workbook
+spec. That is the only API route for fabricated rows: input tables cannot be
+written from code, and /v2/files has no CSV upload. See docs/plugins.md.
+
+Generated mode needs no GROUP BY -- you control the rows, so emit exactly the
 rows the plugin should draw, one per category.
 
 The SQL is Snowflake-flavoured (`::varchar`, `::number`, `::timestamp_ntz`).
@@ -25,6 +36,7 @@ Another connection type needs the casts adjusted.
 import argparse
 import csv
 import json
+import pathlib
 import re
 import sys
 
@@ -32,33 +44,23 @@ import sys
 # VALUES literal never touches a real table -- but this one is always present.
 DEFAULT_CONNECTION = "bee6615c-7d11-435c-8819-e32207b27fe4"   # Sigma Sample Database
 
-# Warehouse mode's default, used only when --path is given without one.
+# Warehouse mode's known-good target.
 DEFAULT_PATH = ["RETAIL", "PLUGS_ELECTRONICS", "PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA"]
 DEFAULT_DIMENSION = "STORE_REGION"
 DEFAULT_MEASURE = "Sum(PRICE * QUANTITY)"
 DEFAULT_MEASURE_NAME = "Revenue"
-
-# The built-in generated dataset. Deliberately one text, two numeric, one
-# date and one boolean column, so it satisfies whatever `allowedTypes` a
-# plugin's editor panel filters on.
-SAMPLE_ROWS = [
-    {"NAME": "Alice Johnson",  "SCORE": 87.5, "EVENTS": 42, "AS_OF": "2024-01-15", "ACTIVE": True},
-    {"NAME": "Bob Smith",      "SCORE": 92.3, "EVENTS": 18, "AS_OF": "2024-02-20", "ACTIVE": False},
-    {"NAME": "Carol Williams", "SCORE": 78.9, "EVENTS": 35, "AS_OF": "2024-03-10", "ACTIVE": True},
-    {"NAME": "David Brown",    "SCORE": 65.2, "EVENTS": 27, "AS_OF": "2024-04-05", "ACTIVE": True},
-    {"NAME": "Emma Davis",     "SCORE": 95.7, "EVENTS": 51, "AS_OF": "2024-05-12", "ACTIVE": False},
-    {"NAME": "Frank Miller",   "SCORE": 71.4, "EVENTS": 23, "AS_OF": "2024-06-18", "ACTIVE": True},
-]
 
 CAST = {"text": "::varchar", "int": "::number", "float": "::float",
         "boolean": "::boolean", "date": "::date", "datetime": "::timestamp_ntz"}
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}")
-
-# Bare ALL-CAPS identifiers in a warehouse measure expression are column names
-# to qualify. Sigma's functions are CamelCase (Sum, Count), so they don't match.
 _BARE_COLUMN = re.compile(r"(?<!\[)\b([A-Z][A-Z0-9_]{1,})\b(?!\])")
+
+# Sigma ValueType -> our internal kind, for synthesizing from allowedTypes.
+_VALUE_TYPE = {"text": "text", "link": "text", "variant": "text",
+               "number": "float", "integer": "int",
+               "boolean": "boolean", "datetime": "datetime"}
 
 
 def column_id(name):
@@ -68,6 +70,122 @@ def column_id(name):
 
 def qualify(expr, table):
     return _BARE_COLUMN.sub(lambda m: "[%s/%s]" % (table, m.group(1)), expr)
+
+
+# --- reading a plugin's editor panel --------------------------------------
+
+def _balanced_array(src, start):
+    depth = 0
+    for j in range(start, len(src)):
+        if src[j] == "[":
+            depth += 1
+        elif src[j] == "]":
+            depth -= 1
+            if depth == 0:
+                return src[start:j + 1]
+    return None
+
+
+def parse_editor_panel(src):
+    """Pull the configureEditorPanel entries out of plugin source.
+
+    Handles both the inline form `configureEditorPanel([...])` and the
+    indirect one the single-file template uses -- `var DEFS = [...]` then
+    `configureEditorPanel(DEFS)`. Regex rather than a JS parser: these are
+    flat object literals, and the alternative is shipping a JS runtime.
+    """
+    m = re.search(r"configureEditorPanel\s*\(\s*(\[|[A-Za-z_$][\w$]*)", src)
+    if not m:
+        return None
+    token = m.group(1)
+    if token == "[":
+        block = _balanced_array(src, m.end() - 1)
+    else:
+        assign = re.search(r"\b%s\s*=\s*\[" % re.escape(token), src)
+        block = _balanced_array(src, assign.end() - 1) if assign else None
+    if not block:
+        return None
+
+    entries = []
+    for obj in re.findall(r"\{[^{}]*\}", block):
+        def field(key):
+            f = re.search(key + r"\s*:\s*['\"]([^'\"]+)['\"]", obj)
+            return f.group(1) if f else None
+        types = re.search(r"allowedTypes\s*:\s*\[([^\]]*)\]", obj)
+        entries.append({
+            "type": field("type"),
+            "name": field("name"),
+            "source": field("source"),
+            "allowedTypes": [t.strip().strip("'\"") for t in types.group(1).split(",")
+                             if t.strip()] if types else None,
+        })
+    return entries
+
+
+def find_plugin_source(path):
+    """Locate the file declaring the editor panel, given a file or plugin dir."""
+    p = pathlib.Path(path)
+    if p.is_file():
+        return p
+    for candidate in ("index.html", "src/App.jsx", "src/App.js",
+                      "src/App.tsx", "src/main.jsx"):
+        f = p / candidate
+        if f.is_file() and "configureEditorPanel" in f.read_text(encoding="utf-8",
+                                                                 errors="replace"):
+            return f
+    for f in sorted(p.rglob("*")):
+        if not f.is_file() or f.suffix not in (".html", ".js", ".jsx", ".ts", ".tsx"):
+            continue
+        if "node_modules" in f.parts or "dist" in f.parts:
+            continue
+        if "configureEditorPanel" in f.read_text(encoding="utf-8", errors="replace"):
+            return f
+    return None
+
+
+def bindings_from_panel(entries):
+    """-> (primary element name, [(column binding, kind)], extra element names)."""
+    elements = [e["name"] for e in entries if e["type"] == "element" and e["name"]]
+    if not elements:
+        return None, [], []
+    primary = elements[0]
+    cols = []
+    for e in entries:
+        if e["type"] != "column" or not e["name"]:
+            continue
+        if e.get("source") and e["source"] != primary:
+            continue
+        allowed = e.get("allowedTypes") or []
+        kind = next((_VALUE_TYPE[t] for t in allowed if t in _VALUE_TYPE), "text")
+        cols.append((e["name"], kind))
+    return primary, cols, elements[1:]
+
+
+def synthesize_rows(cols, n):
+    """Placeholder rows whose columns match the plugin's bindings.
+
+    Named after the bindings so the plugin binds cleanly, typed to satisfy its
+    `allowedTypes`, and deterministic so a screenshot is reproducible. The
+    values are visibly placeholders -- use --data for rows that mean something.
+    """
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    rows = []
+    for i in range(n):
+        row = {}
+        for name, kind in cols:
+            title = re.sub(r"[_-]+", " ", str(name)).strip().title() or "Item"
+            if kind == "int":
+                row[name] = int(round(4200 * (0.78 ** i))) + (i * 7) % 40
+            elif kind == "float":
+                row[name] = round(4200 * (0.78 ** i) + ((i * 7) % 40), 1)
+            elif kind == "boolean":
+                row[name] = (i % 2 == 0)
+            elif kind == "datetime":
+                row[name] = "2024-%02d-15" % ((i % 12) + 1)
+            else:
+                row[name] = "%s %s" % (title, letters[i % len(letters)])
+        rows.append(row)
+    return rows
 
 
 # --- generated mode -------------------------------------------------------
@@ -97,7 +215,7 @@ def infer_type(values):
 
 
 def literal(value, kind):
-    """Render one cell as a SQL literal. Every string is single-quote escaped."""
+    """One cell as a SQL literal. Strings are single-quote escaped."""
     if value is None or str(value).strip() == "":
         return "NULL"
     if kind == "boolean":
@@ -125,7 +243,7 @@ def sql_name(header, taken):
 
 
 def build_generated(rows, connection_id):
-    """Compile rows into a kind:"sql" table element. Returns (element, colmap)."""
+    """Compile rows into a kind:"sql" table element. -> (element, colmap)."""
     headers = []
     for row in rows:
         for k in row:
@@ -136,7 +254,7 @@ def build_generated(rows, connection_id):
     taken = set()
     names = [sql_name(h, taken) for h in headers]
 
-    select = ",\n  ".join('v.c%d%s AS %s' % (i + 1, CAST[k], n)
+    select = ",\n  ".join("v.c%d%s AS %s" % (i + 1, CAST[k], n)
                           for i, (n, k) in enumerate(zip(names, kinds)))
     values = ",\n  ".join(
         "(" + ", ".join(literal(r.get(h), k) for h, k in zip(headers, kinds)) + ")"
@@ -144,8 +262,8 @@ def build_generated(rows, connection_id):
     cols = ", ".join("c%d" % (i + 1) for i in range(len(headers)))
     statement = "SELECT\n  %s\nFROM (VALUES\n  %s\n) AS v(%s)" % (select, values, cols)
 
-    # Column formulas reference the implicit source element name "Custom SQL".
-    # An explicit `name` keeps the header as written -- without it Sigma
+    # Formulas reference the implicit source element name "Custom SQL". An
+    # explicit `name` keeps the header as written -- without it Sigma
     # prettifies UNITS_SOLD into "Units Sold".
     columns = [{"id": column_id(h), "name": str(h), "formula": "[Custom SQL/%s]" % n}
                for h, n in zip(headers, names)]
@@ -156,7 +274,6 @@ def build_generated(rows, connection_id):
         "columns": columns,
         "order": [c["id"] for c in columns],
     }
-    # header -> (column id, inferred kind), for picking label/value columns
     return element, {h: (column_id(h), k) for h, k in zip(headers, kinds)}
 
 
@@ -192,8 +309,7 @@ def build_warehouse(args):
              "formula": qualify(args.measure, table_name)},
         ],
         # Once a table has groupings, every column must be a groupBy dimension
-        # or a calculations entry -- an orphan renders a nonsensical summary
-        # value instead of per-row data.
+        # or a calculations entry -- an orphan renders a nonsensical summary.
         "groupings": [{"id": "by-dim", "groupBy": [dim_id], "calculations": [mea_id]}],
     }
     return element, dim_id, mea_id
@@ -220,64 +336,114 @@ def main():
     ap.add_argument("--connection-id", default=DEFAULT_CONNECTION)
 
     ap.add_argument("--data", metavar="FILE",
-                    help="generated mode: rows to compile into the SQL VALUES literal. "
-                         "A .csv/.tsv, or a JSON array of objects. Omit for the "
-                         "built-in sample shape.")
-    ap.add_argument("--label-column", help="generated mode: column the plugin labels by "
+                    help="rows to compile into the SQL VALUES literal: a .csv/.tsv, or "
+                         "a JSON array of objects. Prefer this -- make the rows mean "
+                         "something for this plugin.")
+    ap.add_argument("--plugin-src", metavar="PATH",
+                    help="plugin file or directory. Its configureEditorPanel column "
+                         "bindings decide the generated columns and the plugin config, "
+                         "so the data matches the plugin with no guesswork.")
+    ap.add_argument("--rows", type=int, default=8,
+                    help="how many rows to synthesize from --plugin-src. Default 8.")
+    ap.add_argument("--label-column", help="column the plugin labels by "
                                            "(default: first text column)")
-    ap.add_argument("--value-column", help="generated mode: column the plugin measures "
+    ap.add_argument("--value-column", help="column the plugin measures "
                                            "(default: first numeric column)")
 
     ap.add_argument("--path", nargs=3, metavar=("DB", "SCHEMA", "TABLE"),
-                    help="warehouse mode: bind a real table instead of generating rows. "
-                         "Known-good example: %s" % " ".join(DEFAULT_PATH))
-    ap.add_argument("--dimension", default=DEFAULT_DIMENSION,
-                    help="warehouse mode: column to group by. Default %s" % DEFAULT_DIMENSION)
-    ap.add_argument("--measure", default=DEFAULT_MEASURE,
-                    help="warehouse mode: aggregate expression; bare column names are "
-                         "qualified for you. Default %r" % DEFAULT_MEASURE)
+                    help="bind a real warehouse table instead of generating rows. "
+                         "Known-good: %s" % " ".join(DEFAULT_PATH))
+    ap.add_argument("--dimension", default=DEFAULT_DIMENSION)
+    ap.add_argument("--measure", default=DEFAULT_MEASURE)
     ap.add_argument("--measure-name", default=DEFAULT_MEASURE_NAME)
 
-    # These must match the `name` values in the plugin's own
-    # configureEditorPanel DEFS. The bundled template declares label/value, but
-    # a plugin is free to declare anything -- sec-logo-bars uses `team`. Bind
-    # the wrong key and the plugin silently renders its synthetic fallback.
-    ap.add_argument("--label-key", default="label",
-                    help="plugin config key for the label, matching its DEFS. Default 'label'")
-    ap.add_argument("--value-key", default="value",
-                    help="plugin config key for the value, matching its DEFS. Default 'value'")
+    # Only needed when the plugin's panel can't be read. With --plugin-src the
+    # binding keys come straight from the plugin's own DEFS.
+    ap.add_argument("--label-key", help="plugin config key for the label, matching its "
+                                        "DEFS. Inferred from --plugin-src, else 'label'")
+    ap.add_argument("--value-key", help="plugin config key for the value, matching its "
+                                        "DEFS. Inferred from --plugin-src, else 'value'")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
+    notes = []
+    panel_cols = []          # [(binding name, kind)] read off the plugin's panel
+
+    if args.plugin_src:
+        src_file = find_plugin_source(args.plugin_src)
+        if not src_file:
+            raise SystemExit("build-plugin-workbook: no file declaring "
+                             "configureEditorPanel under %s" % args.plugin_src)
+        entries = parse_editor_panel(src_file.read_text(encoding="utf-8", errors="replace"))
+        if entries is None:
+            raise SystemExit("build-plugin-workbook: could not parse "
+                             "configureEditorPanel in %s" % src_file)
+        _, panel_cols, extra_elements = bindings_from_panel(entries)
+        if extra_elements:
+            notes.append("plugin declares extra element bindings (%s) that this workbook "
+                         "does not populate -- bind them by hand in Sigma"
+                         % ", ".join(extra_elements))
+
     if args.path is not None:
         table, label_id, value_id = build_warehouse(args)
-        described = "%s (warehouse)" % ".".join(args.path)
+        label_key = args.label_key or "label"
+        value_key = args.value_key or "value"
+        described = "%s (warehouse, grouped)" % ".".join(args.path)
+        config_extra = {}
     else:
-        rows = load_rows(args.data) if args.data else SAMPLE_ROWS
+        if args.data:
+            rows = load_rows(args.data)
+            described = "%d row(s) from %s" % (len(rows), args.data)
+        elif panel_cols:
+            rows = synthesize_rows(panel_cols, max(1, args.rows))
+            described = ("%d placeholder row(s) synthesized from the plugin's panel (%s)"
+                         % (len(rows), ", ".join("%s:%s" % (n, k) for n, k in panel_cols)))
+            notes.append("values are placeholders -- pass --data for rows that mean "
+                         "something for this plugin")
+        else:
+            raise SystemExit(
+                "build-plugin-workbook: nothing to build data from.\n"
+                "  Pass --data FILE with rows that suit the plugin (preferred),\n"
+                "  or --plugin-src plugins/<name> to synthesize columns from its\n"
+                "  editor panel, or --path DB SCHEMA TABLE for a real table.")
+
         table, colmap = build_generated(rows, args.connection_id)
 
         def pick(explicit, wanted, what):
             if explicit:
                 if explicit not in colmap:
-                    raise SystemExit(
-                        "build-plugin-workbook: --%s-column %r is not in the data.\n"
-                        "  Available: %s" % (what, explicit, ", ".join(colmap)))
+                    raise SystemExit("build-plugin-workbook: --%s-column %r is not in the "
+                                     "data.\n  Available: %s"
+                                     % (what, explicit, ", ".join(colmap)))
                 return colmap[explicit][0]
             for header, (cid, kind) in colmap.items():
                 if kind in wanted:
                     return cid
-            raise SystemExit(
-                "build-plugin-workbook: no %s column found (need one of %s).\n"
-                "  Columns: %s" % (what, "/".join(wanted),
-                                   ", ".join("%s:%s" % (h, k) for h, (_, k) in colmap.items())))
+            raise SystemExit("build-plugin-workbook: no %s column found (need one of %s).\n"
+                             "  Columns: %s"
+                             % (what, "/".join(wanted),
+                                ", ".join("%s:%s" % (h, k) for h, (_, k) in colmap.items())))
 
         label_id = pick(args.label_column, ("text",), "label")
         value_id = pick(args.value_column, ("int", "float"), "value")
-        described = "%d generated row(s) as a SQL VALUES literal" % len(rows)
+
+        # Bind every column the plugin's panel asked for, not just label/value --
+        # a plugin with lat/long/tooltip bindings needs all of them.
+        config_extra = {}
+        if panel_cols:
+            for bname, _kind in panel_cols:
+                if bname in colmap:
+                    config_extra[bname] = colmap[bname][0]
+        label_key = args.label_key or (panel_cols[0][0] if panel_cols else "label")
+        value_key = args.value_key or (panel_cols[1][0] if len(panel_cols) > 1 else "value")
+
+    config = {"source": {"kind": "element", "elementId": "tbl-data"}}
+    config.update(config_extra)
+    config.setdefault(label_key, label_id)
+    config.setdefault(value_key, value_id)
 
     plugin = {"id": "plug-viz", "kind": "plugin", "pluginId": args.plugin_id,
-              "config": {"source": {"kind": "element", "elementId": "tbl-data"},
-                         args.label_key: label_id, args.value_key: value_id}}
+              "config": config}
 
     # A text element's content field is `body` and takes markdown. There is no
     # `text` or `variant` field -- supplying those fails POST with
@@ -304,8 +470,10 @@ def main():
             fh.write(text + "\n")
         print("wrote %s" % args.out, file=sys.stderr)
         print("  source: %s" % described, file=sys.stderr)
-        print("  bound:  %s=%s, %s=%s"
-              % (args.label_key, label_id, args.value_key, value_id), file=sys.stderr)
+        print("  bound:  %s" % ", ".join("%s=%s" % (k, v) for k, v in config.items()
+                                          if k != "source"), file=sys.stderr)
+        for n in notes:
+            print("  note:   %s" % n, file=sys.stderr)
     else:
         print(text)
 
