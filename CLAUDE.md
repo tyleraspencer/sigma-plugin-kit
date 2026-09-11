@@ -22,7 +22,7 @@ some other reason doesn't step on one:
 - SDK global is `window.SigmaPlugin`, **not** `window.sigmaComputing.*`.
 - Deploy before registering — `PATCH /v2/plugins/{id}` cannot change `url`.
 - Plugin hosting must be a **public** repo; this one is private on purpose.
-- Bind to real data; never build an input table for synthetic rows.
+- Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
 - `Invalid kind: "<kind>"` means a *field* has a bad value shape.
 - HTTP 200 does not mean it worked. Check the compiled SQL.

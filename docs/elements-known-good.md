@@ -58,7 +58,7 @@ field** — supplying them fails with `Invalid kind: "text"`.
 
 ## table — warehouse source, grouped
 
-The default shape `build-plugin-workbook.py` emits. Warehouse column formulas
+What `build-plugin-workbook.py --path DB SCHEMA TABLE` emits. Warehouse column formulas
 reference the **last path segment**; both the raw column name and its display
 name work (`[T/STORE_REGION]` and `[T/Store Region]` compile identically).
 
@@ -96,6 +96,41 @@ from (select STORE_REGION, sum(PRICE * QUANTITY) SUM_22
       from RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA
       group by STORE_REGION) Q1
 ```
+
+## table — generated SQL source (fabricated rows)
+
+The only API route for fabricated rows in a workbook. The literal lives in
+the spec; nothing is uploaded and no data model is involved. Column formulas
+reference the implicit source element name **`Custom SQL`**, and an explicit
+`name` keeps the header as written — without it Sigma prettifies `UNITS_SOLD`
+into "Units Sold".
+
+```json
+{
+  "id": "tbl-data",
+  "kind": "table",
+  "name": "Generated data",
+  "source": {
+    "kind": "sql",
+    "connectionId": "<conn-uuid>",
+    "statement": "SELECT\n  v.c1::varchar AS NAME,\n  v.c2::float AS SCORE\nFROM (VALUES\n  ('Alice Johnson', 87.5),\n  ('Bob Smith', 92.3)\n) AS v(c1, c2)"
+  },
+  "columns": [
+    { "id": "col-name",  "name": "NAME",  "formula": "[Custom SQL/NAME]" },
+    { "id": "col-score", "name": "SCORE", "formula": "[Custom SQL/SCORE]" }
+  ],
+  "order": ["col-name", "col-score"]
+}
+```
+
+The field is **`statement`**, not `sql`. Casts are Snowflake-flavoured
+(`::varchar`, `::number`, `::float`, `::boolean`, `::date`,
+`::timestamp_ntz`); another connection type needs them adjusted. No
+`groupings` needed — you control the rows, so emit them pre-aggregated.
+`build-plugin-workbook.py` generates all of this, escaping `'` as `''`.
+
+Verified 2026-09-11: published, compiled, and exported back showing the exact
+literal rows.
 
 ## table — data-model source
 
@@ -185,10 +220,14 @@ numeric parameter use `list` + `selectionMode: "single"` + a manual source.
 | Shape | Result |
 |---|---|
 | `insert-rows` / `delete-rows` / `open-url` effects | `Invalid kind: "button"`; every variant tried (dynamic-value objects, plain scalars, `rows[]`, `elementId` instead of `table`, no values, `inputMode:"edit"`) |
-| `source: {kind: "sql" / "custom-sql" / "customSql" / "warehouse-sql"}` | `Invalid kind: "table"` |
+| `source: {kind: "sql", ..., sql: "..."}` | `Invalid kind: "table"` — the field is **`statement`**, not `sql`; see the working shape above |
+| `source: {kind: "custom-sql" / "customSql" / "warehouse-sql"}` | `Invalid kind: "table"` |
 | `source: {kind: "manual" / "inline"}` on a table | `Invalid kind: "table"` |
 | text element with `text` + `variant` | `Invalid kind: "text"` |
 | bare `[COLUMN]` on a warehouse source | **publishes 200**, compiles to `Unknown column` |
 
-There is consequently **no way to put literal rows into a workbook from a
-spec**. Bind to a real table instead.
+Note the first row: `kind: "sql"` is valid and was misdiagnosed as rejected
+because the probe passed the statement under a field called `sql`. Sigma
+rejects a known field carrying a bad value shape, so a wrong field name on a
+valid `kind` reports `Invalid kind` — exactly the trap at the top of this
+file, self-inflicted.
