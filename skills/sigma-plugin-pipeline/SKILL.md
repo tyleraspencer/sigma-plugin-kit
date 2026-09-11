@@ -39,7 +39,7 @@ Edit `plugins/<name>/src/App.jsx` and re-run. That directory is gitignored —
 the public host repo holds the deployed copy, and only `_react-template` is
 tracked here.
 
-If the plugin's `configureEditorPanel` DEFS use names other than
+If the plugin's `configureEditorPanel` entries use names other than
 `label`/`value` — check `plugins/<name>/src/App.jsx` —
 pass `-- --label-key <name> --value-key <name>`. Binding the wrong key renders
 the fallback, silently.

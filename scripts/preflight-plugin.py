@@ -213,7 +213,7 @@ def check_editor_panel(rep, builder, src_file):
     rep.ok("editor-panel-parses",
            "%d column binding(s) on element '%s'" % (len(cols), primary))
     rep.ok("label-value-keys",
-           "label=%s  value=%s  (order in DEFS decides this)" % (cols[0][0], cols[1][0]))
+           "label=%s  value=%s  (panel order decides this)" % (cols[0][0], cols[1][0]))
     if extra:
         rep.warn("extra-elements",
                  "declares element binding(s) %s that the generated workbook "
@@ -224,7 +224,7 @@ def check_editor_panel(rep, builder, src_file):
 def check_bindings_resolve(rep, cols, data_path):
     """Every declared column binding must find a column in the data.
 
-    build-plugin-workbook.py binds by matching the DEFS name against the raw
+    build-plugin-workbook.py binds by matching the panel entry name against the raw
     data header. A typo doesn't error -- the key is simply absent from the
     plugin's config, and the plugin quietly renders without that field.
     """

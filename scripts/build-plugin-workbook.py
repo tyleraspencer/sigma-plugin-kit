@@ -89,23 +89,16 @@ def _balanced_array(src, start):
 def parse_editor_panel(src):
     """Pull the configureEditorPanel entries out of plugin source.
 
-    Handles both the inline form `configureEditorPanel([...])` and the
-    indirect one, `var DEFS = [...]` then `configureEditorPanel(DEFS)`. New
-    plugins are React and use the inline form; the indirect form is kept for
-    plugins written under the old single-file archetype, which still need to
-    parse so a workbook can be rebuilt for one. Regex rather than a JS parser:
-    these are flat object literals, and the alternative is shipping a JS
-    runtime.
+    The panel must be declared inline -- `configureEditorPanel([...])`. The
+    indirect `var DEFS = [...]` form the old single-file template used is no
+    longer accepted: every plugin is React and writes the array at the call
+    site. Regex rather than a JS parser: these are flat object literals, and
+    the alternative is shipping a JS runtime.
     """
-    m = re.search(r"configureEditorPanel\s*\(\s*(\[|[A-Za-z_$][\w$]*)", src)
+    m = re.search(r"configureEditorPanel\s*\(\s*\[", src)
     if not m:
         return None
-    token = m.group(1)
-    if token == "[":
-        block = _balanced_array(src, m.end() - 1)
-    else:
-        assign = re.search(r"\b%s\s*=\s*\[" % re.escape(token), src)
-        block = _balanced_array(src, assign.end() - 1) if assign else None
+    block = _balanced_array(src, m.end() - 1)
     if not block:
         return None
 
@@ -361,11 +354,11 @@ def main():
     ap.add_argument("--measure-name", default=DEFAULT_MEASURE_NAME)
 
     # Only needed when the plugin's panel can't be read. With --plugin-src the
-    # binding keys come straight from the plugin's own DEFS.
+    # binding keys come straight from the plugin's own editor panel.
     ap.add_argument("--label-key", help="plugin config key for the label, matching its "
-                                        "DEFS. Inferred from --plugin-src, else 'label'")
+                                        "editor panel. Inferred from --plugin-src, else 'label'")
     ap.add_argument("--value-key", help="plugin config key for the value, matching its "
-                                        "DEFS. Inferred from --plugin-src, else 'value'")
+                                        "editor panel. Inferred from --plugin-src, else 'value'")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
