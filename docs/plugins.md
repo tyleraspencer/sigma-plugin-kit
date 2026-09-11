@@ -28,81 +28,71 @@ not to serve costs you a delete + re-create, which mints a *different*
 
 ## 1. Build
 
-A Sigma plugin is an iframe web app. It needs no bundler and no manifest — a
-single hosted `index.html` is genuinely sufficient. `scripts/new-plugin.sh`
-copies `plugins/_template/index.html` and substitutes the title.
+A Sigma plugin is a web app rendered in an iframe. There's no manifest and no
+required folder structure. Two archetypes, and picking the wrong one wastes
+time:
 
-`plugins/<name>/` is a **gitignored working directory**. The public host repo
-is the single source of truth for deployed HTML; tracking a second copy here
-would drift from what Sigma actually loads with nothing comparing the two.
-Only the template is tracked, which is why the HTML gates live in
-`deploy-plugin.sh` rather than CI.
+| | use it when | cost |
+|---|---|---|
+| **single file** (default) | hand-rolled DOM/SVG/canvas, no npm packages | none — open the file in a browser and it renders |
+| **`--react`** | you need npm packages: Plotly, Mapbox, D3, Recharts | a build step, which `deploy-plugin.sh` runs for you |
 
-### The SDK global is not what most examples say
-
-The UMD bundle at `https://unpkg.com/@sigmacomputing/plugin` defines exactly
-one global — **`window.SigmaPlugin`** — with the imperative client at
-`SigmaPlugin.client`.
-
-`window.sigmaComputing.plugin.client` is a widely-copied pattern that **no
-published bundle defines**. Verified by reading the actual bundles for 1.3.2
-and 1.2.0: the UMD factory assigns `e.SigmaPlugin = {}` and exports
-`e.client`, and the string `sigmaComputing` never appears. A plugin reading
-the wrong global gets `client === null`, takes its no-client branch, and
-renders its synthetic fallback forever — looking fine in a screenshot while
-never binding a single real column.
-
-This is not hypothetical. In a 60-plugin library reviewed while building this
-toolkit, 55 read the mythical global and only 7 read `SigmaPlugin`.
-
-The template probes both, preferring the real one:
-
-```js
-var sdk = window.SigmaPlugin
-       || (window.sigmaComputing && window.sigmaComputing.plugin)
-       || null;
-var client = (sdk && sdk.client) || null;
+```bash
+bash scripts/new-plugin.sh my-viz "My Viz"            # single file
+bash scripts/new-plugin.sh my-map "My Map" --react     # Vite + React
 ```
 
-CI enforces this: `plugins/*/index.html` must reference `SigmaPlugin`.
+The single-file template loads the SDK's UMD bundle and uses only the
+imperative `client`. The React template is a Vite project using the hooks.
+Both templates already demonstrate grouped editor-panel options, a `color`
+picker, a `dropdown`, a loading state, a resize observer, and a `variable`
+write-back that cross-filters the workbook.
 
-React is a peer dependency of the UMD build, but only the hooks need it. The
-imperative `client` works without React loaded.
+**The complete API — all 14 editor-panel types, the client surface, variables,
+actions, interactions, and the help-center's own errors — is in
+[plugin-api.md](plugin-api.md).** Read that rather than the help centre; the
+help pages document about a third of the API and get several details wrong.
 
-### The three things every plugin needs
+The three things that matter most in any plugin:
 
 ```js
-// 1. Declare the editor-panel bindings. Each `name` is the key that arrives
-//    in config AND the key a workbook spec's plugin `config` must use.
+// 1. Declare the panel, at module scope. Each `name` is the config key AND the
+//    key a workbook spec's plugin `config` must use.
 client.config.configureEditorPanel([
-  { name: 'source', type: 'element' },
-  { name: 'label',  type: 'column', source: 'source', allowedTypes: ['text'] },
-  { name: 'value',  type: 'column', source: 'source', allowedTypes: ['number','integer'] }
+  { type: 'element', name: 'source' },
+  { type: 'column', name: 'label', source: 'source', allowMultiple: false,
+    allowedTypes: ['text'] },
 ]);
 
-// 2. React to config, and re-subscribe when the bound element changes.
-client.config.subscribe(function(cfg){ /* ... */ });
-client.elements.subscribeToElementData(cfg.source, function(data){ /* ... */ });
+// 2. React to config, re-subscribing when the bound element changes.
+client.config.subscribe(cfg => { /* ... */ });
+client.elements.subscribeToElementData(cfg.source, data => { /* ... */ });
 ```
 
-- `subscribeToElementData` yields an object **keyed by column ID**, each value
-  a parallel array of cells — *not* an array of row objects. Zip by index.
-- Always release the previous subscription before opening a new one. Re-binding
-  the source otherwise leaks a listener that keeps overwriting state with the
-  old element's rows.
-- **3. A synthetic fallback**, so the frame is never blank in the editor. Make
-  it deterministic — a plugin that reshuffles every render can't be screenshot
-  or eyeballed for regressions. Render a visible "demo data" badge so nobody
-  mistakes the fallback for real numbers.
+- `column` requires **both** `source` and `allowMultiple`. `allowedTypes` is an
+  **allowlist** (the help page says "prevent", and misspells it `allowTypes`).
+- Data arrives **keyed by column ID** — an object of parallel arrays, not row
+  objects. Zip by index. Capped at **25,000 values**; past that use
+  `subscribeToIncrementalElementData`.
+- Always release the previous element subscription before opening a new one, or
+  re-binding leaks a listener that overwrites state with the old element's rows.
+- **3. A synthetic fallback**, so the frame is never blank in the editor. Keep
+  it deterministic — a plugin that reshuffles every render can't be
+  screenshotted or eyeballed for regressions — and badge it visibly so nobody
+  mistakes it for real data.
 
-Other `configureEditorPanel` types beyond `element` and `column` include
-`text`, `toggle` and `dropdown`; full list in Sigma's plugin development API
-docs.
+Renaming a panel entry's `name` silently unbinds every workbook using it.
 
-Renaming a `DEFS` key silently unbinds every workbook already using it.
+**The SDK global is `window.SigmaPlugin`**, with a pre-initialized
+`SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is widely copied
+and defined by no published bundle. React is an *external* of the UMD build,
+so the hooks need `window.React` loaded first — the imperative `client`
+doesn't, which is why the single-file template sticks to it.
 
-The template runs with no Sigma client at all, so you can open it directly in a
-browser while iterating.
+**Iterate against a dev URL** rather than redeploying: `npm run dev` (Vite, port
+5173 — the default `devUrl` Sigma registers), then in the workbook use the
+element's **•••** menu → **Point to Development URL**. Changes hot-reload;
+changing editor-panel *options* means re-entering the panel values.
 
 ## 2. Deploy
 
@@ -110,8 +100,16 @@ browser while iterating.
 URL=$(bash scripts/deploy-plugin.sh my-viz)
 ```
 
-Pushes `plugins/my-viz/` to the public host repo and polls the live URL until
-it returns `200 text/html`.
+Builds first if the plugin is the React archetype (`npm ci`/`install` then
+`npm run build`), publishes the whole tree, and polls the live URL until it
+returns `200 text/html` with bytes matching what was pushed.
+
+**Built assets must use relative paths.** Vite's default `base: '/'` emits
+`/assets/index-xxx.js`, which 404s under
+`…/sigma-plugins/plugins/<name>/` — the page loads, the bundle doesn't, and
+Sigma shows a blank iframe with nothing in any log. The template sets
+`base: './'`, and `deploy-plugin.sh` refuses to publish a build with absolute
+asset paths.
 
 Two hard requirements, both enforced by the script:
 
@@ -305,12 +303,12 @@ fallback is precisely what renders when nothing resolves.
 ## Gotchas that cost a rebuild
 
 - **`url` is immutable on PATCH.** Deploy and verify, then register.
-- **Controls cannot bind to a plugin's `config`.** Plugin config binds columns;
-  controls only parametrize filter values. To drive a plugin from a control,
-  add a constant column to the plugin's source element whose formula is a bare
-  `[<controlId>]` reference, then bind that column. `list`-with-manual-source
-  and `segmented` both resolve through a bare ref; use `segmented` with
-  `values: [1, 0]` for booleans.
+- **Controls bind to a plugin directly** — declare a `variable` in the editor
+  panel and read/write it with `getVariable`/`setVariable`. It works in both
+  directions, so a plugin can also cross-filter the workbook by writing a
+  selection into a control. ([plugin-api.md](plugin-api.md) → "Variables".)
+  Earlier versions of this file told you to project a constant column with a
+  bare `[<controlId>]` formula and bind that; **that workaround is retracted.**
 - **Re-publishing a harvested spec with an input table:** strip every system
   column (`ID`, `CREATED_AT`, `CREATED_BY`, `UPDATED_AT`, `UPDATED_BY`) back to
   a bare `{"id": ...}` first. Sigma adds a `formula` field to them on GET, and

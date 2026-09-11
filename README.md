@@ -26,9 +26,23 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-Full walkthrough and every gotcha that costs a rebuild:
-**[docs/plugins.md](docs/plugins.md)**. Verified element shapes to copy from
-rather than invent: **[docs/elements-known-good.md](docs/elements-known-good.md)**.
+Need npm packages — Plotly, Mapbox, D3, Recharts? Scaffold the React
+archetype first; `deploy-plugin.sh` builds it:
+
+```bash
+bash scripts/new-plugin.sh my-map "My Map" --react
+bash scripts/pipeline.sh my-map "My Map"
+```
+
+**[docs/plugin-api.md](docs/plugin-api.md)** is the SDK reference — all 14
+editor-panel types, the client surface, variables, actions, interactions, and
+the help centre's own errors. Read it instead of the help pages, which cover
+about a third of the API and get several details wrong.
+
+Pipeline walkthrough and every gotcha that costs a rebuild:
+**[docs/plugins.md](docs/plugins.md)**. Verified workbook element shapes to
+copy from rather than invent:
+**[docs/elements-known-good.md](docs/elements-known-good.md)**.
 
 ## Three things that will bite you
 
@@ -37,8 +51,8 @@ exactly one global, `window.SigmaPlugin`, with the client at
 `SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is a
 widely-copied pattern that no published bundle defines — a plugin reading it
 gets `client === null` and silently renders its synthetic fallback forever,
-looking fine in a screenshot while never binding a real column. CI fails any
-plugin here that doesn't reference `SigmaPlugin`.
+looking fine in a screenshot while never binding a real column.
+`deploy-plugin.sh` refuses to publish a plugin that doesn't reference it.
 
 **`PATCH /v2/plugins/{id}` cannot change `url`.** Deploy and verify the URL
 serves *before* registering. Getting it wrong means delete + re-create, a new
@@ -76,23 +90,26 @@ truth** for deployed plugin HTML. `plugins/<name>/` here is a gitignored
 working directory: you scaffold into it, edit, and `deploy-plugin.sh` pushes
 the result to the host repo.
 
-Only `plugins/_template/` is tracked. Committing deployed plugins here too
+Only the two templates are tracked. Committing deployed plugins here as well
 would mean two copies with nothing comparing them — the kit's copy could drift
 from what Sigma actually loads and nothing would notice.
 
-Because the kit doesn't track them, the HTML gates (SigmaPlugin global, SDK
-loaded, no leftover placeholder) run in `deploy-plugin.sh` rather than CI —
-deploy is the last moment the content is private and the only moment a check
-can stop a broken plugin from getting a public URL and a `pluginId`.
-`deploy-plugin.sh` also byte-compares what Pages serves against your local
-file, so a stale Pages build can't masquerade as a successful deploy.
+Because the kit doesn't track them, the gates run in `deploy-plugin.sh` rather
+than CI: SigmaPlugin global and SDK present for single-file plugins, a real
+`@sigmacomputing/plugin` dependency and **relative** built asset paths for
+React ones, and no leftover placeholder either way. Deploy is the last moment
+the content is private and the only moment a check can stop a broken plugin
+from getting a public URL and an immutable `pluginId`. It also byte-compares
+what Pages serves against the build, so a stale Pages build can't masquerade
+as a successful deploy. CI gates the templates themselves.
 
 ## Layout
 
 ```
 plugins/
-  _template/index.html        the only HTML this repo tracks; new-plugin.sh copies it
-  <name>/index.html           gitignored working files -- see "Where plugins live"
+  _template/index.html        single-file archetype: UMD SDK, no build
+  _react-template/            React archetype: Vite + hooks, for npm packages
+  <name>/                     gitignored working dirs -- see "Where plugins live"
 scripts/
   pipeline.sh                 all four steps in one command; start here
   new-plugin.sh               1. scaffold plugins/<name>/
@@ -118,7 +135,8 @@ scripts/
 skills/
   sigma-plugin-pipeline/      the operating manual
 docs/
-  plugins.md                  the pipeline, the SDK, every gotcha
+  plugin-api.md               THE SDK reference: 14 panel types, client, variables, actions
+  plugins.md                  the pipeline, archetypes, every gotcha
   elements-known-good.md      verified element shapes -- copy, don't invent
   auth.md                     auth ladder, credential tiers, Cowork, egress hosts
   api-notes.md                wire formats and error modes

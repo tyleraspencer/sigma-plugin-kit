@@ -37,3 +37,11 @@ workbooks/
 # compares them. Only the template new-plugin.sh copies from is tracked.
 plugins/*/
 !plugins/_template/
+!plugins/_react-template/
+
+# Build artefacts inside a React-archetype plugin. The template itself is
+# tracked; nobody's node_modules or dist is.
+plugins/*/node_modules/
+plugins/*/dist/
+plugins/*/package-lock.json
+plugins/*/yarn.lock

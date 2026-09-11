@@ -21,9 +21,18 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-Then edit `plugins/<plugin-name>/index.html` and re-run. That directory is
-gitignored — the public host repo holds the deployed copy, and only
-`plugins/_template/` is tracked here.
+`pipeline.sh` scaffolds the **single-file** archetype: one `index.html`, SDK
+from unpkg, no build. For anything needing npm packages — Plotly, Mapbox, D3,
+Recharts — scaffold the React archetype first, then run the pipeline:
+
+```bash
+bash scripts/new-plugin.sh my-map "My Map" --react
+bash scripts/pipeline.sh my-map "My Map"
+```
+
+`deploy-plugin.sh` builds it. Then edit `plugins/<name>/` and re-run. That
+directory is gitignored — the public host repo holds the deployed copy, and
+only the two templates are tracked here.
 
 If the plugin's `configureEditorPanel` DEFS use names other than
 `label`/`value` — check with `grep -A6 'DEFS = \[' plugins/<name>/index.html` —
@@ -104,7 +113,23 @@ and defined by **no published bundle** — a plugin reading it gets
 screenshot. `deploy-plugin.sh` refuses to publish a plugin that doesn't
 reference `SigmaPlugin`.
 
-Editor-panel bindings, the column-keyed shape `subscribeToElementData`
-returns, subscription cleanup, and the synthetic-fallback convention are all
-in `docs/plugins.md` → "1. Build". Start from `plugins/_template/index.html`
-rather than writing one from scratch.
+**`docs/plugin-api.md` is the API reference — read it, not the help centre.**
+The help pages cover about a third of the SDK and get several things wrong
+(`allowTypes` vs `allowedTypes`, groups holding only `text`, `config.set`'s
+signature, which namespace `getElementColumns` lives on).
+
+Things worth knowing before you write a panel:
+
+- **14 editor-panel types**, not the handful the help page lists: `group`,
+  `element`, `column`, `text`, `toggle`, `checkbox`, `radio`, `dropdown`,
+  `color`, `variable`, `interaction`, `action-trigger`, `action-effect`,
+  `url-parameter`.
+- `column` requires **both** `source` and `allowMultiple`. `allowedTypes` is
+  an **allowlist**.
+- **A plugin can bind several elements** — declare multiple `element` entries.
+- **`variable` is the two-way channel to a workbook control**: read with
+  `getVariable`, write with `setVariable`, and the *current* value lives at
+  `.defaultValue.value` despite the name. This is how a plugin cross-filters.
+  Do **not** use the old projected-`[controlId]`-column trick; it's retracted.
+- `secure: true` on a `text` entry for an API token.
+- Data is **column-keyed parallel arrays**, capped at 25,000 values.
