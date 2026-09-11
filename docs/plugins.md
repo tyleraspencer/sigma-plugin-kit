@@ -172,6 +172,25 @@ The plugin element:
 ```
 
 Config bindings are **bare column-ID strings**, keyed by the `DEFS` names.
+
+**Those keys must match the plugin's own `DEFS`.** The bundled template
+declares `label` and `value`, which is what the generator binds by default. A
+plugin is free to declare anything — `sec-logo-bars` uses `team` for its
+dimension — so tell the generator:
+
+```bash
+python3 scripts/build-plugin-workbook.py ... --label-key team --value-key wins
+```
+
+Bind the wrong key and the plugin renders its synthetic fallback, because
+nothing it looks for resolves. Read the keys straight off the plugin:
+
+```bash
+grep -A6 'DEFS = \[' plugins/<name>/index.html
+```
+
+Non-column `DEFS` entries (`text`, `toggle`, `dropdown`) are editor-panel
+inputs the user sets in Sigma, not things a spec binds.
 `kind: "plugin"` is undocumented in Sigma's spec API (the spec endpoints are
 private Beta) but **verified working end-to-end** — POSTed and GET-back
 byte-for-byte on papercrane 2026-09-11, `pluginId` and `config` intact.

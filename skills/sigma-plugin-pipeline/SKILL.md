@@ -25,6 +25,11 @@ Then edit `plugins/<plugin-name>/index.html` and re-run. That directory is
 gitignored — the public host repo holds the deployed copy, and only
 `plugins/_template/` is tracked here.
 
+If the plugin's `configureEditorPanel` DEFS use names other than
+`label`/`value` — check with `grep -A6 'DEFS = \[' plugins/<name>/index.html` —
+pass `-- --label-key <name> --value-key <name>`. Binding the wrong key renders
+the fallback, silently.
+
 Run the four steps by hand only when something fails. They're in
 `docs/plugins.md`, along with the SDK reference and every gotcha.
 

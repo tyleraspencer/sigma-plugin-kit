@@ -77,7 +77,6 @@ def main():
     ap.add_argument("--name", required=True, help="workbook name")
     ap.add_argument("--plugin-id", required=True, help="pluginId from register-plugin.sh")
     ap.add_argument("--folder-id", help="destination folder id")
-    ap.add_argument("--title", help="on-canvas title (defaults to --name)")
 
     ap.add_argument("--connection-id", default=DEFAULT_CONNECTION)
     ap.add_argument("--path", nargs=3, metavar=("DB", "SCHEMA", "TABLE"), default=DEFAULT_PATH)
@@ -86,20 +85,22 @@ def main():
     ap.add_argument("--measure", default=DEFAULT_MEASURE,
                     help="aggregate expression, bare column names OK. Default %r" % DEFAULT_MEASURE)
     ap.add_argument("--measure-name", default=DEFAULT_MEASURE_NAME)
-    ap.add_argument("--dimension-name", help="display name for the dimension column")
+    # These must match the `name` values in the plugin's own
+    # configureEditorPanel DEFS. The bundled template declares label/value,
+    # but a plugin is free to declare anything -- sec-logo-bars uses `team`
+    # for its dimension. Bind the wrong key and the plugin silently renders
+    # its synthetic fallback, because nothing it looks for resolves.
     ap.add_argument("--label-key", default="label",
-                    help="plugin config key for the dimension. Default 'label'")
+                    help="plugin config key for the dimension, matching the plugin's "
+                         "configureEditorPanel DEFS. Default 'label'")
     ap.add_argument("--value-key", default="value",
-                    help="plugin config key for the measure. Default 'value'")
-    ap.add_argument("--extra-bind", action="append", default=[], metavar="KEY=COLUMN",
-                    help="additional plugin config binding; repeatable")
-    ap.add_argument("--no-table", action="store_true",
-                    help="omit the source table from the layout (plugin only)")
+                    help="plugin config key for the measure, matching the plugin's "
+                         "configureEditorPanel DEFS. Default 'value'")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
     table_name = args.path[-1]
-    dim_name = args.dimension_name or args.dimension.replace("_", " ").title()
+    dim_name = args.dimension.replace("_", " ").title()
 
     dim_id = column_id(args.dimension)
     mea_id = column_id(args.measure_name)
@@ -131,28 +132,16 @@ def main():
         args.label_key: dim_id,
         args.value_key: mea_id,
     }
-    known = {args.dimension: dim_id, args.measure_name: mea_id, dim_id: dim_id, mea_id: mea_id}
-    for pair in args.extra_bind:
-        if "=" not in pair:
-            raise SystemExit("build-plugin-workbook: --extra-bind must be KEY=COLUMN, got %r" % pair)
-        key, target = (p.strip() for p in pair.split("=", 1))
-        if target not in known:
-            raise SystemExit(
-                "build-plugin-workbook: --extra-bind %s=%s -- no such column on the generated "
-                "table.\n  Available: %s" % (key, target, ", ".join(sorted(known)))
-            )
-        config[key] = known[target]
-
     plugin = {"id": "plug-viz", "kind": "plugin", "pluginId": args.plugin_id, "config": config}
 
     # A text element's content field is `body` and takes markdown. There is no
     # `text` or `variant` field -- supplying those fails POST with
     # `Invalid kind: "text"`, which blames the element kind rather than the
     # field. See docs/elements-known-good.md.
-    title = {"id": "txt-title", "kind": "text", "body": "**%s**" % (args.title or args.name)}
+    title = {"id": "txt-title", "kind": "text", "body": "**%s**" % args.name}
 
     elements = [title, plugin, table]
-    ordered = ["txt-title", "plug-viz"] + ([] if args.no_table else ["tbl-data"])
+    ordered = ["txt-title", "plug-viz", "tbl-data"]
     spans = {"txt-title": 3, "plug-viz": 17, "tbl-data": 12}
 
     page_id = "page-plugin"

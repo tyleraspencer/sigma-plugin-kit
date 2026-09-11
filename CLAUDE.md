@@ -12,29 +12,21 @@ Read `docs/plugins.md` before touching the pipeline. The
 Extracted from `ryan-workbook-skill` with plugin conventions from
 `millersigma`; see `NOTICE` and `docs/provenance.md`.
 
-## Never get these wrong
+## The traps, in one line each
 
-- **The SDK global is `window.SigmaPlugin`**, client at `SigmaPlugin.client`.
-  `window.sigmaComputing.plugin.client` appears in most examples and in the
-  majority of the `millersigma` library, but **no published bundle defines
-  it** (verified against 1.3.2 and 1.2.0). A plugin reading it gets
-  `client === null` and silently renders its fallback forever. CI gates this.
-- **Deploy before registering.** `PATCH /v2/plugins/{id}` cannot change `url`;
-  a wrong URL means delete + re-create, a new `pluginId`, and silently broken
-  workbooks.
-- **Hosting must be a public repo.** Sigma fetches the URL anonymously; a
-  private repo's Pages output will not serve. This repo is private on purpose.
-- **Bind to real data. Never build an input table for synthetic rows.** Sigma
-  cannot populate one from a spec, so it publishes empty and the plugin falls
-  back to hardcoded numbers that look real. The default source is verified:
-  `Sigma Sample Database` →
-  `RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`.
-- **Copy element shapes from `docs/elements-known-good.md`; never invent field
-  names.** `Invalid kind: "<kind>"` means a *field* has a bad value shape, not
-  that the kind is unsupported — Sigma drops unknown field names silently.
-- **HTTP 200 does not mean it works.** A bare `[COLUMN]` on a warehouse source
-  publishes clean and compiles to `Unknown column`. Check the compiled SQL.
-- **Use `scripts/pipeline.sh`** rather than running the four steps by hand.
+Rationale and evidence for all of these live in
+`skills/sigma-plugin-pipeline/SKILL.md`, which loads automatically when the
+task is building a plugin. Listed here only so an agent editing this repo for
+some other reason doesn't step on one:
+
+- SDK global is `window.SigmaPlugin`, **not** `window.sigmaComputing.*`.
+- Deploy before registering — `PATCH /v2/plugins/{id}` cannot change `url`.
+- Plugin hosting must be a **public** repo; this one is private on purpose.
+- Bind to real data; never build an input table for synthetic rows.
+- Copy element shapes from `docs/elements-known-good.md`; never invent fields.
+- `Invalid kind: "<kind>"` means a *field* has a bad value shape.
+- HTTP 200 does not mean it worked. Check the compiled SQL.
+- Use `scripts/pipeline.sh` rather than running the four steps by hand.
 
 ## Secrets
 
