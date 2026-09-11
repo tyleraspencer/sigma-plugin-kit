@@ -19,15 +19,27 @@ Sources worth going back to:
 instance** — use it directly.
 
 ```html
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/@sigmacomputing/plugin@1.3.2/dist/umd/sigmacomputing-plugin.umd.js"></script>
 ```
 
 Pin the version in anything you register. `window.sigmaComputing.plugin.client`
 is a widely-copied pattern that **no published bundle has ever defined**.
 
-**React is an external in the UMD build.** `window.React` must exist *before*
-the SDK script for any hook to work. The imperative `client` needs no React,
-which is why the single-file template uses only `client`.
+**React is an external in the UMD build, and it is not optional — not even for
+a plugin that uses no hooks.** `window.React` must exist *before* the SDK
+script, full stop. The 1.3.2 factory calls `React.createContext` at module top
+level, so with no React it throws right there, before assigning anything:
+`window.SigmaPlugin` is left as a bare `{}` with zero keys, `SigmaPlugin.client`
+is `undefined`, and a plugin that checks for a client takes its no-client branch
+and renders synthetic fallback data forever. The only symptom is one uncaught
+`u.createContext is not a function` in the console — nothing looks wrong in a
+screenshot. Verified in a browser against 1.3.2, 2026-09-11: with React loaded
+first, `window.SigmaPlugin` exposes all 17 exports and `client` is a real
+object; without it, zero. ReactDOM is *not* required.
+
+> This corrects an earlier claim in these docs that only the hooks need React.
+> They don't; the bundle needs it to finish loading at all.
 
 **npm / bundler.** `npm install @sigmacomputing/plugin`, then import `client`
 and the hooks. Hooks must be wrapped in `<SigmaClientProvider client={...}>`

@@ -100,6 +100,52 @@ else
     echo "deploy-plugin: does not load the Sigma plugin SDK from unpkg." >&2
     gate_fail=1
   fi
+  # React is an *external* of the SDK's UMD build and its factory calls
+  # React.createContext at module top level, so with no window.React the bundle
+  # throws before it assigns anything: window.SigmaPlugin ends up a bare {},
+  # client is undefined, and the plugin renders its fallback forever. The only
+  # symptom is one uncaught "u.createContext is not a function" -- invisible in
+  # a screenshot, which is exactly why this is a deploy gate and not a comment.
+  # Applies even to a hook-free plugin, and order matters as much as presence.
+  #
+  # The check itself is preflight-plugin.py's, imported rather than reimplemented.
+  # pipeline.sh already runs the full preflight, but deploy-plugin.sh is callable
+  # on its own -- which is exactly how sec-logo-bars shipped broken -- so the
+  # direct path needs the gate too. Importing keeps one parser: two copies of
+  # this regex pair is how they silently stop agreeing.
+  preflight_py="$repo_root/scripts/preflight-plugin.py"
+  if [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
+    if ! "${SIGMA_PYTHON:-python3}" - "$preflight_py" "$src/index.html" <<'PYGATE'
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("_pf", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+rep = mod.Report()
+mod.check_react_before_sdk(rep, mod.strip_comments(pathlib.Path(sys.argv[2]).read_text()))
+sys.exit(1 if rep.failed else 0)
+PYGATE
+    then
+      echo "  Put this BEFORE the SDK script tag:" >&2
+      echo '    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>' >&2
+      gate_fail=1
+    fi
+  else
+    # Fallback when preflight-plugin.py is absent: same rule, comment-blind.
+    # `|| true` is load-bearing under `set -e -o pipefail` -- a no-match grep
+    # exits 1, which would abort silently in the very case this explains.
+    sdk_line=$(grep -nE '<script[^>]*unpkg\.com/@sigmacomputing/plugin' "$src/index.html" \
+                 | head -1 | cut -d: -f1 || true)
+    react_line=$(grep -nE '<script[^>]*/react(@[0-9][^/"]*)?/umd/react[.-]' "$src/index.html" \
+                   | head -1 | cut -d: -f1 || true)
+    if [ -n "$sdk_line" ] && { [ -z "$react_line" ] || [ "$react_line" -gt "$sdk_line" ]; }; then
+      echo "deploy-plugin: loads the Sigma SDK UMD bundle without loading React first." >&2
+      echo "  SigmaPlugin.client would be undefined and the plugin would render its" >&2
+      echo "  fallback forever, with only an uncaught 'u.createContext is not a" >&2
+      echo "  function' in the console. Put BEFORE the SDK script tag:" >&2
+      echo '    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>' >&2
+      gate_fail=1
+    fi
+  fi
   [ "$gate_fail" -eq 0 ] || { echo "deploy-plugin: refusing to publish plugins/$name." >&2; exit 1; }
 fi
 

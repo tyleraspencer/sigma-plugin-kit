@@ -17,12 +17,19 @@
   published bundle has ever defined — read it and `client` is null, so the
   plugin renders its fallback forever while looking fine in a screenshot.
 
-  React is an *external* of the UMD build, so the hooks need `window.React`
-  loaded first. This file uses only the imperative `client`, so it doesn't.
+  REACT IS NOT OPTIONAL, even for a plugin like this one that uses no hooks.
+  React is an *external* of the 1.3.2 UMD build and the factory calls
+  `React.createContext` at module top level. With no `window.React` it throws
+  there — `window.SigmaPlugin` is left as a bare `{}`, `SigmaPlugin.client` is
+  `undefined`, and the plugin renders its fallback forever with nothing in the
+  console but one uncaught `u.createContext is not a function`. Verified in a
+  browser against 1.3.2, 2026-09-11. Load React FIRST, always. (ReactDOM is
+  not needed.)
 
   Full API — all 14 editor-panel types, variables, actions, interactions:
   docs/plugin-api.md.
 -->
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/@sigmacomputing/plugin@1.3.2/dist/umd/sigmacomputing-plugin.umd.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -233,8 +240,23 @@
 
   // Sigma documents no resize event and no auto-height, so watch the iframe
   // ourselves and re-layout.
+  //
+  // The naive version -- `new ResizeObserver(recompute).observe(document.body)`
+  // -- is an infinite loop: recompute() rebuilds the rows *inside* the observed
+  // element, which fires the observer, which recomputes. The page pins a core
+  // and stops responding to clicks, with no error anywhere. So: ignore
+  // callbacks where the box didn't actually change size, and coalesce the rest
+  // into one frame.
   if (window.ResizeObserver){
-    new ResizeObserver(function(){ recompute(); }).observe(document.body);
+    var lastW = 0, lastH = 0, queued = false;
+    new ResizeObserver(function(){
+      var w = document.body.clientWidth, h = document.body.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function(){ queued = false; recompute(); });
+    }).observe(document.body);
   }
 })();
 </script>

@@ -42,8 +42,9 @@ bash scripts/new-plugin.sh my-viz "My Viz"            # single file
 bash scripts/new-plugin.sh my-map "My Map" --react     # Vite + React
 ```
 
-The single-file template loads the SDK's UMD bundle and uses only the
-imperative `client`. The React template is a Vite project using the hooks.
+The single-file template loads React and then the SDK's UMD bundle, and uses
+only the imperative `client` — React is still mandatory, see below. The React
+template is a Vite project using the hooks.
 Both templates already demonstrate grouped editor-panel options, a `color`
 picker, a `dropdown`, a loading state, a resize observer, and a `variable`
 write-back that cross-filters the workbook.
@@ -85,9 +86,20 @@ Renaming a panel entry's `name` silently unbinds every workbook using it.
 
 **The SDK global is `window.SigmaPlugin`**, with a pre-initialized
 `SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is widely copied
-and defined by no published bundle. React is an *external* of the UMD build,
-so the hooks need `window.React` loaded first — the imperative `client`
-doesn't, which is why the single-file template sticks to it.
+and defined by no published bundle.
+
+**Load React before the SDK script — always, hooks or not.** React is an
+*external* of the UMD build and its factory calls `React.createContext` at
+module top level, so with no `window.React` the bundle throws before assigning
+anything: `SigmaPlugin` is a bare `{}`, `client` is `undefined`, and the plugin
+renders its synthetic fallback forever with only an uncaught
+`u.createContext is not a function` in the console. The single-file template
+loads React for exactly this reason even though it uses only the imperative
+`client`. Two things enforce it: `preflight-plugin.py`'s `react-before-sdk`
+check (which `pipeline.sh` runs), and `deploy-plugin.sh`, which imports that
+same check so a direct `deploy-plugin.sh` call — the path that let
+`sec-logo-bars` ship broken — is gated too. (This corrects an earlier note
+here saying only the hooks need React.) ReactDOM is not required.
 
 **Iterate against a dev URL** rather than redeploying: `npm run dev` (Vite, port
 5173 — the default `devUrl` Sigma registers), then in the workbook use the
