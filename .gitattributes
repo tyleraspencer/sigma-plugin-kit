@@ -1,0 +1,13 @@
+# Force LF line endings regardless of platform / git core.autocrlf settings.
+#
+# Without this, a Windows checkout with core.autocrlf=true rewrites every
+# .sh file's line endings to CRLF, turning `#!/usr/bin/env bash` into
+# `#!/usr/bin/env bash\r` — a "bad interpreter" failure under WSL/Git Bash
+# for all scripts/ scripts.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

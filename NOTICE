@@ -1,0 +1,17 @@
+This repository is an extraction from:
+
+    ryan-workbook-skill
+    https://github.com/RyanLauderback/ryan-workbook-skill
+    Copyright (c) Ryan Lauderback
+
+Most of scripts/ -- the scripts/api/ auth and CRUD layer, doctor.sh,
+validate-spec.py, workbook-manifest.py, sigma-resolve.py, and the
+package-skill.sh / sync-cortex-mirror.py harness -- originates there, with
+local modifications documented in docs/provenance.md.
+
+LICENSING STATUS: the upstream repository publishes no LICENSE file, so no
+license has been granted for redistribution or modification of that code.
+This repository is therefore PRIVATE and is not distributed. Do not make it
+public, publish it to a plugin marketplace, or share it outside its current
+access list without the upstream author's explicit permission and an agreed
+license.
