@@ -39,12 +39,6 @@ plugins/*/
 !plugins/_template/
 !plugins/_react-template/
 
-# Exception: this plugin's SOURCE is tracked, because the host repo only ever
-# receives dist/ -- so without this the only copy of src/App.jsx is one laptop.
-# The build output stays ignored below, so there is still exactly one copy of
-# the deployed artifact and nothing to drift.
-!plugins/movie-seats/
-
 # Build artefacts inside a React-archetype plugin. The template itself is
 # tracked; nobody's node_modules or dist is.
 plugins/*/node_modules/
