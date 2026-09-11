@@ -2,17 +2,17 @@
   "name": "sigma-plugin-kit",
   "owner": { "name": "Tyler Spencer" },
   "metadata": {
-    "description": "Scaffolding for building and shipping Sigma Computing plugins for Claude Code.",
+    "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins.",
     "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "sigma-plugin-kit",
       "source": { "source": "url", "url": "https://github.com/tyleraspencer/sigma-plugin-kit.git" },
-      "description": "Scaffolding for building and shipping Sigma Computing plugins for Claude Code: skill packaging, marketplace manifests, and auth/CRUD tooling against the Sigma REST API.",
+      "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins: scaffold a single-file plugin, deploy it to public GitHub Pages, register it via POST /v2/plugins, and publish a workbook with the plugin bound to real warehouse data.",
       "version": "0.1.0",
       "author": { "name": "Tyler Spencer" },
-      "keywords": ["sigma", "sigma-computing", "plugin", "skill", "scaffolding", "analytics", "business-intelligence"],
+      "keywords": ["sigma", "sigma-computing", "plugin", "custom-visualization", "workbook", "github-pages", "analytics", "business-intelligence"],
       "category": "data"
     }
   ]
