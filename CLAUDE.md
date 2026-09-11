@@ -67,14 +67,10 @@ by Sigma's `/mcp/v2`, so `mcp-search.sh`/`mcp-describe.sh` need a
 
 ## Before committing
 
-- Edited anything under `skills/`? Run `python3 scripts/sync-cortex-mirror.py`.
-  CI fails on mirror drift.
 - Added a `scripts/api/*.sh`? `chmod 755` it. CI asserts the exec bit on every
   file there except `_env.sh` and `_state.sh`, which are sourced.
-- Bumped a version? Bump it in all three manifests together:
-  `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
-  `.cortex-plugin/plugin.json`.
-- `.cortex/skills/` is generated. Never hand-edit it.
+- Bumped a version? Bump it in both manifests together:
+  `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`.
 
 ## Platform constraints
 

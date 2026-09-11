@@ -119,27 +119,6 @@ jobs:
               print(f'checked {p}')
           sys.exit(fail)
           PY
-
-      # --- .cortex/ mirror-drift gate. The mirror is checked in (real files,
-      # --- not symlinks -- see sync-cortex-mirror.py), so it can go stale
-      # --- silently after a skills/ edit. ---
-      - name: .cortex mirror drift gate (non-Windows)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/sync-cortex-mirror.py
-          git diff --exit-code .cortex/
-
-      - name: .cortex mirror drift gate (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          python scripts/sync-cortex-mirror.py
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          git diff --exit-code .cortex/
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
       # --- exec-bit assertion: every scripts/api/*.sh except _env.sh and
       # --- _state.sh (both meant to be sourced, not executed) must be mode
       # --- 100755 ---
@@ -158,19 +137,6 @@ jobs:
             fi
           done < <(git ls-files -s scripts/api/*.sh)
           exit "$fail"
-
-      # --- package-skill.sh round trip: the harness's one job is producing an
-      # --- uploadable ZIP, so assert it actually does on the template skill. ---
-      - name: package-skill.sh round trip
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          out=$(bash scripts/package-skill.sh _template)
-          test -s "$out" || { echo "package-skill.sh produced no archive" >&2; exit 1; }
-          python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).getinfo('_template/SKILL.md')" "$out"
-          echo "packaged ok: $out"
-
       # --- Plugin HTML gates. Both failures here are invisible at runtime:
       # --- a plugin reading the wrong SDK global silently renders its
       # --- synthetic fallback forever, and an unsubstituted title placeholder

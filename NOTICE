@@ -4,10 +4,11 @@ This repository is an extraction from:
     https://github.com/RyanLauderback/ryan-workbook-skill
     Copyright (c) Ryan Lauderback
 
-Most of scripts/ -- the scripts/api/ auth and CRUD layer, doctor.sh,
-validate-spec.py, workbook-manifest.py, sigma-resolve.py, and the
-package-skill.sh / sync-cortex-mirror.py harness -- originates there, with
-local modifications documented in docs/provenance.md.
+The scripts/api/ auth and CRUD layer, doctor.sh and validate-spec.py
+originate there, with local modifications documented in docs/provenance.md.
+Other inherited tooling (sigma-resolve.py, workbook-manifest.py,
+harvest-workbook.sh, the Cowork/Cortex skill-packaging harness, and 12 of
+validate-spec.py's checks) has since been removed as unused here.
 
 Plugin conventions -- the single-file index.html pattern, the SDK-from-unpkg
 approach, the synthetic-fallback idea, and POST /v2/plugins registration --

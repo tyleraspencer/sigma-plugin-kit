@@ -74,40 +74,43 @@ chart of fake numbers that looks real. Bind to a real table.
 
 ```
 plugins/
-  _template/index.html        canonical single-file plugin (SDK, bindings, fallback)
+  _template/index.html        the plugin new-plugin.sh copies from
   <name>/index.html           your plugins, deployed to the public host repo
 scripts/
-  pipeline.sh                 ALL FOUR STEPS in one command; start here
-  new-plugin.sh               scaffold plugins/<name>/ from the template
-  deploy-plugin.sh            push to public Pages, poll until it serves
-  build-plugin-workbook.py    generate a workbook spec around a plugin element
+  pipeline.sh                 all four steps in one command; start here
+  new-plugin.sh               1. scaffold plugins/<name>/
+  deploy-plugin.sh            2. push to public Pages, poll until it serves
+  build-plugin-workbook.py    4. generate the workbook spec
+  validate-spec.py            8 pre-POST checks (publish-workbook.sh runs it)
   doctor.sh                   host + auth + egress preflight
-  validate-spec.py            19 checks, incl. plugin-refs-resolve
-  workbook-manifest.py        spec -> human-readable manifest
-  sigma-resolve.py            freeform input -> Sigma object IDs
-  package-skill.sh            build an uploadable skill ZIP
-  sync-cortex-mirror.py       regenerate .cortex/skills/
   load-env.sh                 read SIGMA_* from .env, for eval
   api/
-    register-plugin.sh        create / list / get / id-for / rename / delete
-    browser-login.sh          PKCE sign-in; stores only a refresh token
-    publish-workbook.sh       post / put / get-spec / get-meta, validates + audits
+    _env.sh  _state.sh        sourced, not run: auth bootstrap + credential tiers
+    browser-login.sh          OAuth + PKCE sign-in; stores only a refresh token
+    get-token.sh              client_credentials mint (Claude Code web, or .env)
+    refresh-token.sh          redeem the stored refresh token, no browser
+    whoami.sh                 confirm identity against the live API
+    register-plugin.sh        3. create / list / get / id-for / rename / delete
+    publish-workbook.sh       post / put / get-spec / get-meta; validates + audits
     verify-workbook.sh        run each element's query, catch compile failures
     audit-workbook-schema.sh  catch error-typed columns that pass POST
-    harvest-workbook.sh       pull a live spec + manifest
-    list-*, search-*, probe-* discovery
-    mcp-search.sh, mcp-describe.sh   richer search/DDL; needs user OAuth
+    list-connections.sh       connections available to you
+    list-table-columns.sh     columns of a warehouse table
+    mcp-search.sh             find workbooks/models/tables by topic
+    mcp-describe.sh           DDL for a table/model/element
 skills/
-  sigma-plugin-pipeline/      the operating manual for the pipeline
-  _template/                  skeleton for a new skill
+  sigma-plugin-pipeline/      the operating manual
 docs/
   plugins.md                  the pipeline, the SDK, every gotcha
   elements-known-good.md      verified element shapes -- copy, don't invent
-  auth.md                    auth ladder, credential tiers, Cowork, egress hosts
-  api-notes.md               wire formats and error modes
-  plugin-harness.md          Claude Code plugin manifests, mirror, packaging
-  provenance.md              what came from where, and what changed
+  auth.md                     auth ladder, credential tiers, Cowork, egress hosts
+  api-notes.md                wire formats and error modes
+  provenance.md               what came from where, and what changed
 ```
+
+The numbered scripts are the four pipeline steps; `pipeline.sh` runs all of
+them. Everything else is either auth plumbing or a discovery helper.
+
 
 ## Auth
 
@@ -124,8 +127,8 @@ Plugin registration writes need Admin or the **Manage plugins** permission.
 
 ubuntu / macos / windows: `bash -n`, `py_compile`, JSON parse (this is what
 gates the plugin manifests), SKILL.md frontmatter, plugin HTML sanity (SDK
-global, placeholder, SDK loaded), `.cortex/` drift, `scripts/api/*.sh` exec
-bits, a `package-skill.sh` round trip, and a `doctor.sh` smoke run.
+global, unsubstituted placeholder, SDK actually loaded), `scripts/api/*.sh`
+exec bits, and a `doctor.sh` smoke run.
 
 ## Platforms
 

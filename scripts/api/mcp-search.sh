@@ -22,13 +22,11 @@
 #   1 — MCP responded but reported an error
 #   2 — usage error (bad args)
 #   3 — MCP endpoint itself failed at the HTTP/transport level. Most
-#       likely cause now: a stale or wrong-scope token (e.g. minted
-#       before mcp:access was added, or a client_credentials token —
-#       Sigma's /mcp/v2 only accepts interactive user OAuth, confirmed
-#       by Sigma's MCP engineering team — see docs/api-notes.md →
-#       "2026-08-07"). Re-run scripts/api/browser-login.sh first; fall
-#       back to scripts/api/search-files.sh (REST, substring not
-#       semantic match) if MCP still isn't available.
+#       likely cause: a stale or wrong-scope token (e.g. minted before
+#       mcp:access was added, or a client_credentials token — Sigma's
+#       /mcp/v2 only accepts interactive user OAuth, confirmed by
+#       Sigma's MCP engineering team; see docs/api-notes.md). Re-run
+#       scripts/api/browser-login.sh.
 set -euo pipefail
 source "$(dirname "$0")/_env.sh"
 
@@ -109,9 +107,6 @@ except urllib.error.HTTPError as e:
         f"  first (this skill's /mcp/v2 access requires an interactive-OAuth\n"
         f"  token with mcp:access scope, not a client_credentials one —\n"
         f"  confirmed by Sigma's MCP engineering team, see docs/api-notes.md).\n"
-        f"  If MCP still isn't available after that, fall back to\n"
-        f"  scripts/api/search-files.sh \"{query}\" — REST-based, substring\n"
-        f"  match rather than semantic search.\n"
         f"  Response body: {err_body}\n"
     )
     sys.exit(3)

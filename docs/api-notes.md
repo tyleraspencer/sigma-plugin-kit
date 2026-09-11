@@ -81,7 +81,6 @@ REST fallbacks when MCP is unavailable:
 
 | MCP call | REST fallback | Loses |
 |---|---|---|
-| `mcp-search.sh` | `search-files.sh` | semantic match — REST is substring only |
 | `mcp-describe.sh` | `GET /v2/dataModels/{id}/spec` | DDL, and the error-typed-column detection `audit-workbook-schema.sh` depends on |
 
 ## GET-spec can 500 when UI features aren't representable
@@ -89,9 +88,6 @@ REST fallbacks when MCP is unavailable:
 `GET /v2/workbooks/{id}/spec` can return HTTP 500 with `code: service_error`
 on a workbook that is otherwise healthy — opens in the UI, listed in
 `/v2/files`, metadata fetchable via `GET /v2/workbooks/{id}`.
-
-`harvest-workbook.sh` detects this envelope and deletes the partial
-`spec.json` rather than seeding downstream work with an error body.
 
 **Original confirmed trigger:** pivot-table cell-colour conditional
 formatting, reproducible by toggling it in the UI (applied → 500, removed →

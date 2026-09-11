@@ -10,9 +10,8 @@
 # else in this directory or its api/ subfolder.
 #
 # This repo targets macOS, Linux, WSL, and Git Bash/MSYS2 on native
-# Windows for this bash-based scripts/api/ layer (the pure-Python tools —
-# validate-spec.py, workbook-manifest.py, sigma-resolve.py,
-# sync-cortex-mirror.py — also run under a native Windows `python`/`py -3`
+# Windows for this bash-based scripts/api/ layer (validate-spec.py and
+# build-plugin-workbook.py also run under a native Windows `python`/`py -3`
 # with no bash at all).
 
 set -uo pipefail  # not -e: we want to keep checking after a failure
@@ -83,7 +82,7 @@ if command -v python3 >/dev/null 2>&1; then
   if "$SIGMA_PYTHON" -c "import yaml" 2>/dev/null; then
     ok "PyYAML available"
   else
-    warn "PyYAML not installed — validate-spec.py/workbook-manifest.py fall back to yq for YAML input"
+    warn "PyYAML not installed — validate-spec.py falls back to yq for YAML spec input"
   fi
 else
   bad "python3 not found — see 'Required binaries' above"

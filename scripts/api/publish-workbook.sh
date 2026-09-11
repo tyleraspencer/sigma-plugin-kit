@@ -42,8 +42,8 @@ fi
 # top-level "document" key -- only name/folderId/description stay top-level
 # siblings, e.g.:
 #   {"name":"...", "folderId":"...", "document":{"schemaVersion":1,"kind":"workbook","pages":[...],"layout":"..."}}
-# This skill's tooling (validate-spec.py, workbook-manifest.py, every example
-# in examples/) authors and validates the FLAT shape (schemaVersion/pages/
+# This repo's tooling (validate-spec.py, build-plugin-workbook.py) authors
+# and validates the FLAT shape (schemaVersion/pages/
 # layout as top-level siblings) -- POSTing that flat shape as-is is rejected
 # with a large union-type validation error naming paths like
 # "0.document.0.0.0", which reads like unrelated schema drift rather than
