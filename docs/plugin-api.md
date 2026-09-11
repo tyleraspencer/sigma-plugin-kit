@@ -13,39 +13,48 @@ Sources worth going back to:
 
 ## Getting the SDK
 
-**Single-file / UMD.** The bundle defines one global, `SigmaPlugin`, exporting
-`client`, `initialize()`, `SigmaClientProvider`, every hook, and
-`polyfillRequestAnimationFrame`. `SigmaPlugin.client` is a **pre-initialized
-instance** — use it directly.
+**npm, always.** Every plugin in this kit is a Vite + React project, so the SDK
+is a bundled dependency and there is no script tag anywhere.
 
-```html
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/@sigmacomputing/plugin@1.3.2/dist/umd/sigmacomputing-plugin.umd.js"></script>
+```bash
+npm install @sigmacomputing/plugin react react-dom
 ```
 
-Pin the version in anything you register. `window.sigmaComputing.plugin.client`
-is a widely-copied pattern that **no published bundle has ever defined**.
+```js
+import { client, useConfig, useElementData } from '@sigmacomputing/plugin';
+```
 
-**React is an external in the UMD build, and it is not optional — not even for
-a plugin that uses no hooks.** `window.React` must exist *before* the SDK
-script, full stop. The 1.3.2 factory calls `React.createContext` at module top
-level, so with no React it throws right there, before assigning anything:
-`window.SigmaPlugin` is left as a bare `{}` with zero keys, `SigmaPlugin.client`
-is `undefined`, and a plugin that checks for a client takes its no-client branch
+`client` is a **pre-initialized instance** — use it directly. Hooks are
+nominally meant to be wrapped in `<SigmaClientProvider client={...}>`, but
+because `client` is already initialized the sample plugins call
+`client.config.configureEditorPanel([...])` at module scope and use hooks
+directly with no provider. That works, and it's what the template does.
+
+Never reach for a window global. `window.sigmaComputing.plugin.client` is a
+widely-copied pattern that **no published bundle has ever defined**, and
+`window.SigmaPlugin` only exists when the UMD build is loaded from a script
+tag — so in a bundled plugin both read `undefined`.
+
+### Why the UMD/script-tag route is not used here
+
+The bundle does define a `SigmaPlugin` global with the same 17 exports, and it
+is what a CDN `<script>` gives you. It was removed from this kit because its
+failure mode is silent and expensive.
+
+React is an *external* of the UMD build, and the factory calls
+`React.createContext` at module top level. With no `window.React` loaded
+*before* the SDK script it throws right there, before assigning anything:
+`window.SigmaPlugin` is left a bare `{}` with zero keys, `SigmaPlugin.client` is
+`undefined`, and a plugin that checks for a client takes its no-client branch
 and renders synthetic fallback data forever. The only symptom is one uncaught
 `u.createContext is not a function` in the console — nothing looks wrong in a
 screenshot. Verified in a browser against 1.3.2, 2026-09-11: with React loaded
 first, `window.SigmaPlugin` exposes all 17 exports and `client` is a real
-object; without it, zero. ReactDOM is *not* required.
+object; without it, zero keys.
 
-> This corrects an earlier claim in these docs that only the hooks need React.
-> They don't; the bundle needs it to finish loading at all.
-
-**npm / bundler.** `npm install @sigmacomputing/plugin`, then import `client`
-and the hooks. Hooks must be wrapped in `<SigmaClientProvider client={...}>`
-— except that `client` is pre-initialized, so in practice the sample plugins
-call `client.config.configureEditorPanel([...])` at module scope and use hooks
-directly with no provider.
+Bundling makes that unrepresentable, which is the whole argument for a build
+step. If you are reading someone else's single-file plugin, this is the first
+thing to check.
 
 ## configureEditorPanel — all 14 types
 

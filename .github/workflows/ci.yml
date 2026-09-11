@@ -137,7 +137,7 @@ jobs:
             fi
           done < <(git ls-files -s scripts/api/*.sh)
           exit "$fail"
-      # --- The two plugin templates are the only plugin source this repo
+      # --- plugins/_react-template is the only plugin source this repo
       # --- tracks: deployed plugins live in the public host repo, and
       # --- deploy-plugin.sh gates them at the moment they become a public
       # --- URL. This keeps what new-plugin.sh copies from honest. ---
@@ -146,7 +146,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json, pathlib, sys
+          import json, pathlib, re, sys
           fail = 0
 
           def bad(msg):
@@ -154,24 +154,24 @@ jobs:
               print(msg, file=sys.stderr)
               fail = 1
 
-          # --- single-file template ---
-          p = pathlib.Path('plugins/_template/index.html')
-          html = p.read_text(encoding='utf-8')
-          if 'SigmaPlugin' not in html:
-              bad(f'{p}: does not reference window.SigmaPlugin -- the only global the '
-                  f'UMD bundle defines, so every plugin scaffolded from this template '
-                  f'would silently render only its fallback.')
-          if 'unpkg.com/@sigmacomputing/plugin' not in html:
-              bad(f'{p}: does not load the Sigma plugin SDK.')
-          if '__PLUGIN_TITLE__' not in html:
-              bad(f'{p}: missing the __PLUGIN_TITLE__ placeholder new-plugin.sh substitutes.')
-          print(f'checked {p}')
-
-          # --- react template ---
           root = pathlib.Path('plugins/_react-template')
+
+          # Every plugin is a Vite + React project. The single-file archetype
+          # was removed deliberately: a page loading the SDK's UMD bundle from
+          # a CDN renders fallback data forever if React isn't loaded first,
+          # and the only symptom is one uncaught console error. If a
+          # hand-written template ever reappears, this fails.
+          stray = sorted(p for p in pathlib.Path('plugins').glob('_*/index.html')
+                         if p.parent.name != '_react-template')
+          for p in stray:
+              bad(f'{p}: a non-React plugin template reappeared. Every plugin is a '
+                  f'Vite + React project; see docs/plugins.md.')
+
           pkg = json.loads((root / 'package.json').read_text(encoding='utf-8'))
-          if '@sigmacomputing/plugin' not in (pkg.get('dependencies') or {}):
-              bad(f'{root}/package.json: missing the @sigmacomputing/plugin dependency.')
+          deps = pkg.get('dependencies') or {}
+          for dep in ('@sigmacomputing/plugin', 'react', 'react-dom'):
+              if dep not in deps:
+                  bad(f'{root}/package.json: missing the {dep} dependency.')
           if 'build' not in (pkg.get('scripts') or {}):
               bad(f'{root}/package.json: no build script -- deploy-plugin.sh runs `npm run build`.')
 
@@ -182,12 +182,26 @@ jobs:
               bad(f"{root}/vite.config.js: must set base: './' or the build's assets "
                   f"404 under the Pages subpath.")
 
+          html = (root / 'index.html').read_text(encoding='utf-8')
+          # A CDN script tag here would reintroduce the archetype, and its
+          # silent-fallback failure, inside a project that looks bundled.
+          if re.search(r'<script[^>]*\bsrc\s*=\s*["\'][^"\']*sigmacomputing-plugin', html):
+              bad(f'{root}/index.html: loads the SDK from a script tag. A bundled '
+                  f'plugin must import the client from @sigmacomputing/plugin.')
+
           app = (root / 'src' / 'App.jsx').read_text(encoding='utf-8')
           if 'configureEditorPanel' not in app:
               bad(f'{root}/src/App.jsx: never calls configureEditorPanel, so the plugin '
                   f'would expose no bindings.')
           if '__PLUGIN_TITLE__' not in app:
               bad(f'{root}/src/App.jsx: missing the __PLUGIN_TITLE__ placeholder.')
+          if "from '@sigmacomputing/plugin'" not in app:
+              bad(f"{root}/src/App.jsx: never imports from '@sigmacomputing/plugin'.")
+          # An unguarded ResizeObserver whose callback re-renders into the
+          # observed element is an infinite loop that pins a CPU core silently.
+          if 'ResizeObserver' in app and not any(
+                  g in app for g in ('clientWidth', 'clientHeight', 'contentRect')):
+              bad(f'{root}/src/App.jsx: ResizeObserver with no size comparison.')
           print(f'checked {root}')
 
           sys.exit(fail)

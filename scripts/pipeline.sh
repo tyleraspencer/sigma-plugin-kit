@@ -54,8 +54,8 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$1" >&2; }
 
 # --- 1. scaffold ----------------------------------------------------------
 say "1/7 build"
-if [ -f "plugins/$name/index.html" ]; then
-  echo "  plugins/$name/index.html exists -- using it as-is" >&2
+if [ -f "plugins/$name/package.json" ]; then
+  echo "  plugins/$name exists -- using it as-is" >&2
 else
   bash scripts/new-plugin.sh "$name" ${title:+"$title"} >&2
 fi

@@ -90,9 +90,12 @@ def parse_editor_panel(src):
     """Pull the configureEditorPanel entries out of plugin source.
 
     Handles both the inline form `configureEditorPanel([...])` and the
-    indirect one the single-file template uses -- `var DEFS = [...]` then
-    `configureEditorPanel(DEFS)`. Regex rather than a JS parser: these are
-    flat object literals, and the alternative is shipping a JS runtime.
+    indirect one, `var DEFS = [...]` then `configureEditorPanel(DEFS)`. New
+    plugins are React and use the inline form; the indirect form is kept for
+    plugins written under the old single-file archetype, which still need to
+    parse so a workbook can be rebuilt for one. Regex rather than a JS parser:
+    these are flat object literals, and the alternative is shipping a JS
+    runtime.
     """
     m = re.search(r"configureEditorPanel\s*\(\s*(\[|[A-Za-z_$][\w$]*)", src)
     if not m:
