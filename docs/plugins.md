@@ -29,25 +29,37 @@ not to serve costs you a delete + re-create, which mints a *different*
 ## 1. Build
 
 A Sigma plugin is a web app rendered in an iframe. There's no manifest and no
-required folder structure. Two archetypes, and picking the wrong one wastes
-time:
-
-| | use it when | cost |
-|---|---|---|
-| **single file** (default) | hand-rolled DOM/SVG/canvas, no npm packages | none — open the file in a browser and it renders |
-| **`--react`** | you need npm packages: Plotly, Mapbox, D3, Recharts | a build step, which `deploy-plugin.sh` runs for you |
+required folder structure. **Every plugin here is a Vite + React project** —
+there is one archetype, so there's nothing to choose:
 
 ```bash
-bash scripts/new-plugin.sh my-viz "My Viz"            # single file
-bash scripts/new-plugin.sh my-map "My Map" --react     # Vite + React
+bash scripts/new-plugin.sh my-viz "My Viz"
 ```
 
-The single-file template loads React and then the SDK's UMD bundle, and uses
-only the imperative `client` — React is still mandatory, see below. The React
-template is a Vite project using the hooks.
-Both templates already demonstrate grouped editor-panel options, a `color`
-picker, a `dropdown`, a loading state, a resize observer, and a `variable`
-write-back that cross-filters the workbook.
+The template is a Vite project using the SDK's React hooks, and already
+demonstrates grouped editor-panel options, a `color` picker, a `dropdown`, a
+loading state, a guarded resize observer, and a `variable` write-back that
+cross-filters the workbook.
+
+### Why there is no hand-written-HTML archetype
+
+A single `index.html` pulling the SDK's UMD bundle off a CDN looks simpler and
+is a trap. React is an *external* of that bundle, and its factory calls
+`React.createContext` at module top level — so a page that loads the SDK
+without loading React **first** throws right there, before the bundle assigns
+anything. `window.SigmaPlugin` is left as a bare `{}` with zero keys,
+`SigmaPlugin.client` is `undefined`, the plugin takes its no-client branch, and
+it renders fallback data forever. The only symptom anywhere is one uncaught
+`u.createContext is not a function` in the iframe console. It looks perfectly
+correct in a screenshot.
+
+That is not a hypothetical: it shipped. Bundling the SDK as an npm dependency
+makes the failure unrepresentable, so the archetype was removed rather than
+documented around. `preflight-plugin.py`, `deploy-plugin.sh` and CI each refuse
+a plugin that isn't a React project.
+
+Plugins deployed under the old archetype keep serving from their existing URLs
+— nothing was taken down — but they cannot be re-deployed until they're ported.
 
 **The complete API — all 14 editor-panel types, the client surface, variables,
 actions, interactions, and the help-center's own errors — is in
@@ -84,22 +96,18 @@ client.elements.subscribeToElementData(cfg.source, data => { /* ... */ });
 
 Renaming a panel entry's `name` silently unbinds every workbook using it.
 
-**The SDK global is `window.SigmaPlugin`**, with a pre-initialized
-`SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is widely copied
-and defined by no published bundle.
+**Import `client` from the package — never reach for a window global.**
 
-**Load React before the SDK script — always, hooks or not.** React is an
-*external* of the UMD build and its factory calls `React.createContext` at
-module top level, so with no `window.React` the bundle throws before assigning
-anything: `SigmaPlugin` is a bare `{}`, `client` is `undefined`, and the plugin
-renders its synthetic fallback forever with only an uncaught
-`u.createContext is not a function` in the console. The single-file template
-loads React for exactly this reason even though it uses only the imperative
-`client`. Two things enforce it: `preflight-plugin.py`'s `react-before-sdk`
-check (which `pipeline.sh` runs), and `deploy-plugin.sh`, which imports that
-same check so a direct `deploy-plugin.sh` call — the path that let
-`sec-logo-bars` ship broken — is gated too. (This corrects an earlier note
-here saying only the hooks need React.) ReactDOM is not required.
+```js
+import { client, useConfig, useElementData } from '@sigmacomputing/plugin';
+```
+
+`window.sigmaComputing.plugin.client` is widely copied and defined by no
+published bundle. `window.SigmaPlugin` *is* real, but it only exists when the
+UMD build is loaded from a script tag — which a bundled plugin never does, so
+either global appearing in your source means code was pasted from a
+single-file example and will read `undefined` at runtime.
+`preflight-plugin.py`'s `sdk-global` check fails on both.
 
 **Iterate against a dev URL** rather than redeploying: `npm run dev` (Vite, port
 5173 — the default `devUrl` Sigma registers), then in the workbook use the

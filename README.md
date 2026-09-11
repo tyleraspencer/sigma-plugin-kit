@@ -26,13 +26,11 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-Need npm packages — Plotly, Mapbox, D3, Recharts? Scaffold the React
-archetype first; `deploy-plugin.sh` builds it:
-
-```bash
-bash scripts/new-plugin.sh my-map "My Map" --react
-bash scripts/pipeline.sh my-map "My Map"
-```
+Every plugin is a Vite + React project, so npm packages — Plotly, Mapbox, D3,
+Recharts — are available from the start and `deploy-plugin.sh` runs the build.
+There is no hand-written-HTML archetype: it was removed because loading the
+SDK's UMD bundle from a CDN renders fallback data forever if React isn't loaded
+ahead of it, with one uncaught console error as the only symptom.
 
 **[docs/plugin-api.md](docs/plugin-api.md)** is the SDK reference — all 14
 editor-panel types, the client surface, variables, actions, interactions, and
@@ -46,13 +44,14 @@ copy from rather than invent:
 
 ## Three things that will bite you
 
-**The SDK global is not what most examples say.** The UMD bundle defines
-exactly one global, `window.SigmaPlugin`, with the client at
-`SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is a
-widely-copied pattern that no published bundle defines — a plugin reading it
-gets `client === null` and silently renders its synthetic fallback forever,
-looking fine in a screenshot while never binding a real column.
-`deploy-plugin.sh` refuses to publish a plugin that doesn't reference it.
+**Import `client`; never reach for a window global.**
+`import { client } from '@sigmacomputing/plugin'`.
+`window.sigmaComputing.plugin.client` is a widely-copied pattern that no
+published bundle defines, and `window.SigmaPlugin` only exists when the UMD
+build is loaded from a script tag — which a bundled plugin never does. Either
+one reads `undefined`, and the plugin silently renders its synthetic fallback
+forever, looking fine in a screenshot while never binding a real column.
+`preflight-plugin.py` fails on both, and `deploy-plugin.sh` runs it.
 
 **`PATCH /v2/plugins/{id}` cannot change `url`.** Deploy and verify the URL
 serves *before* registering. Getting it wrong means delete + re-create, a new
@@ -93,14 +92,14 @@ truth** for deployed plugin HTML. `plugins/<name>/` here is a gitignored
 working directory: you scaffold into it, edit, and `deploy-plugin.sh` pushes
 the result to the host repo.
 
-Only the two templates are tracked. Committing deployed plugins here as well
+Only `_react-template` is tracked. Committing deployed plugins here as well
 would mean two copies with nothing comparing them — the kit's copy could drift
 from what Sigma actually loads and nothing would notice.
 
 Because the kit doesn't track them, the gates run in `deploy-plugin.sh` rather
-than CI: SigmaPlugin global and SDK present for single-file plugins, a real
-`@sigmacomputing/plugin` dependency and **relative** built asset paths for
-React ones, and no leftover placeholder either way. Deploy is the last moment
+than CI: it refuses anything without a `package.json`, runs the full
+`preflight-plugin.py`, and requires a real `@sigmacomputing/plugin` dependency,
+**relative** built asset paths, and no leftover placeholder. Deploy is the last moment
 the content is private and the only moment a check can stop a broken plugin
 from getting a public URL and an immutable `pluginId`. It also byte-compares
 what Pages serves against the build, so a stale Pages build can't masquerade
@@ -110,8 +109,7 @@ as a successful deploy. CI gates the templates themselves.
 
 ```
 plugins/
-  _template/index.html        single-file archetype: UMD SDK, no build
-  _react-template/            React archetype: Vite + hooks, for npm packages
+  _react-template/            the only archetype: Vite + React, SDK bundled
   <name>/                     gitignored working dirs -- see "Where plugins live"
 scripts/
   pipeline.sh                 all four steps in one command; start here

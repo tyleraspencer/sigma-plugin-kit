@@ -1,6 +1,6 @@
 ---
 name: sigma-plugin-pipeline
-description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". One command runs the whole chain: author a single-file index.html against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
+description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". One command runs the whole chain: author a Vite + React plugin against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
 ---
 
 # Sigma plugin pipeline
@@ -23,21 +23,24 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-`pipeline.sh` scaffolds the **single-file** archetype: one `index.html`, SDK
-from unpkg, no build. For anything needing npm packages — Plotly, Mapbox, D3,
-Recharts — scaffold the React archetype first, then run the pipeline:
+`pipeline.sh` scaffolds a **Vite + React** project — the only archetype. npm
+packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
+`deploy-plugin.sh` runs the build.
 
-```bash
-bash scripts/new-plugin.sh my-map "My Map" --react
-bash scripts/pipeline.sh my-map "My Map"
-```
+There is no hand-written-HTML archetype. It was removed because a page loading
+the SDK's UMD bundle from a CDN renders fallback data forever if React isn't
+loaded ahead of it — React is an external of that bundle — and the only symptom
+is one uncaught `u.createContext is not a function`. `preflight-plugin.py`,
+`deploy-plugin.sh` and CI each refuse a non-React plugin. Plugins already
+deployed under the old archetype keep serving, but can't be re-deployed until
+ported.
 
-`deploy-plugin.sh` builds it. Then edit `plugins/<name>/` and re-run. That
-directory is gitignored — the public host repo holds the deployed copy, and
-only the two templates are tracked here.
+Edit `plugins/<name>/src/App.jsx` and re-run. That directory is gitignored —
+the public host repo holds the deployed copy, and only `_react-template` is
+tracked here.
 
 If the plugin's `configureEditorPanel` DEFS use names other than
-`label`/`value` — check with `grep -A6 'DEFS = \[' plugins/<name>/index.html` —
+`label`/`value` — check `plugins/<name>/src/App.jsx` —
 pass `-- --label-key <name> --value-key <name>`. Binding the wrong key renders
 the fallback, silently.
 
@@ -159,12 +162,13 @@ locally, before deploy. Run it rather than inferring success from a 200.
 
 ## Writing the plugin
 
-The SDK's UMD bundle defines **one** global: `window.SigmaPlugin`, client at
-`SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is widely copied
-and defined by **no published bundle** — a plugin reading it gets
-`client === null` and renders its fallback forever, looking fine in a
-screenshot. `deploy-plugin.sh` refuses to publish a plugin that doesn't
-reference `SigmaPlugin`.
+Import the client — `import { client } from '@sigmacomputing/plugin'` — and
+never reach for a window global. `window.sigmaComputing.plugin.client` is
+widely copied and defined by **no published bundle**;  `window.SigmaPlugin` is
+real but only exists when the UMD build is loaded from a script tag, which a
+bundled plugin never does. Either one reads `undefined` and the plugin renders
+its fallback forever, looking fine in a screenshot. `preflight-plugin.py`'s
+`sdk-global` check fails on both, and `deploy-plugin.sh` runs it.
 
 **`docs/plugin-api.md` is the API reference — read it, not the help centre.**
 The help pages cover about a third of the SDK and get several things wrong

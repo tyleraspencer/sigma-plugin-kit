@@ -7,10 +7,12 @@
 # Prints ONLY the public URL on stdout (diagnostics go to stderr), so it
 # composes:  URL=$(bash scripts/deploy-plugin.sh my-viz)
 #
-# Handles both archetypes:
-#   single file  plugins/<name>/index.html is published as-is.
-#   react        plugins/<name>/package.json present -> npm ci/install and
-#                npm run build, then publish the whole dist/ tree.
+# Every plugin is a Vite + React project: plugins/<name>/package.json must
+# exist, and this runs npm ci/install + npm run build and publishes the whole
+# dist/ tree. A plugin without a package.json is refused -- the hand-written
+# single-file archetype was removed on purpose, because a page that loads the
+# SDK's UMD bundle from a CDN silently renders fallback data forever if React
+# isn't loaded ahead of it. Bundling the SDK makes that unrepresentable.
 #
 # Why a separate repo: Sigma renders a plugin by fetching its URL anonymously
 # into an iframe. This toolkit is private, and a private repo's Pages output is
@@ -45,108 +47,72 @@ src="$repo_root/plugins/$name"
 
 command -v git >/dev/null 2>&1 || { echo "deploy-plugin: git is required." >&2; exit 1; }
 
-# --- Build, if this is a React-archetype plugin ---------------------------
-if [ -f "$src/package.json" ]; then
-  archetype="react"
-  command -v npm >/dev/null 2>&1 || {
-    echo "deploy-plugin: plugins/$name has a package.json but npm is not on PATH." >&2; exit 1; }
-
-  if ! grep -q '@sigmacomputing/plugin' "$src/package.json"; then
-    echo "deploy-plugin: plugins/$name/package.json does not depend on" >&2
-    echo "  @sigmacomputing/plugin -- it cannot talk to Sigma." >&2
-    exit 1
-  fi
-
-  if [ ! -d "$src/node_modules" ]; then
-    echo "Installing dependencies for $name ..." >&2
-    ( cd "$src" && { [ -f package-lock.json ] && npm ci --silent || npm install --silent; } ) >&2
-  fi
-  echo "Building $name ..." >&2
-  ( cd "$src" && npm run build --silent ) >&2
-
-  publish_dir="$src/dist"
-  [ -f "$publish_dir/index.html" ] || {
-    echo "deploy-plugin: build produced no dist/index.html." >&2; exit 1; }
-
-  # The failure this catches is invisible: with Vite's default `base: '/'` the
-  # built page references /assets/index-xxx.js, which 404s under the Pages
-  # subpath. The HTML loads, the bundle doesn't, and Sigma shows a blank
-  # iframe with nothing in any log.
-  if grep -qE '(src|href)="/(assets|static)/' "$publish_dir/index.html"; then
-    echo "deploy-plugin: dist/index.html references assets at an ABSOLUTE path" >&2
-    echo "  (/assets/... or /static/...), which will 404 under" >&2
-    echo "  $HOST_URL/plugins/$name/ and render a blank iframe." >&2
-    echo "  Set \`base: './'\` in vite.config.js (or \`homepage\` for CRA) and rebuild." >&2
-    exit 1
-  fi
-else
-  archetype="single"
-  publish_dir="$src"
-  [ -f "$src/index.html" ] || {
-    echo "deploy-plugin: plugins/$name/index.html not found, and no package.json" >&2
-    echo "  either -- so this is neither archetype." >&2; exit 1; }
-
-  # Gates for the no-build path, run here because the kit does not track
-  # deployed plugins: deploy is the last moment the content is private and the
-  # only moment a check can stop a broken plugin getting a public URL.
-  gate_fail=0
-  if ! grep -q 'SigmaPlugin' "$src/index.html"; then
-    echo "deploy-plugin: does not reference window.SigmaPlugin -- the only global" >&2
-    echo "  the UMD bundle defines. client would be null and the plugin would" >&2
-    echo "  silently render its fallback forever. See docs/plugin-api.md." >&2
-    gate_fail=1
-  fi
-  if ! grep -q 'unpkg.com/@sigmacomputing/plugin' "$src/index.html"; then
-    echo "deploy-plugin: does not load the Sigma plugin SDK from unpkg." >&2
-    gate_fail=1
-  fi
-  # React is an *external* of the SDK's UMD build and its factory calls
-  # React.createContext at module top level, so with no window.React the bundle
-  # throws before it assigns anything: window.SigmaPlugin ends up a bare {},
-  # client is undefined, and the plugin renders its fallback forever. The only
-  # symptom is one uncaught "u.createContext is not a function" -- invisible in
-  # a screenshot, which is exactly why this is a deploy gate and not a comment.
-  # Applies even to a hook-free plugin, and order matters as much as presence.
-  #
-  # The check itself is preflight-plugin.py's, imported rather than reimplemented.
-  # pipeline.sh already runs the full preflight, but deploy-plugin.sh is callable
-  # on its own -- which is exactly how sec-logo-bars shipped broken -- so the
-  # direct path needs the gate too. Importing keeps one parser: two copies of
-  # this regex pair is how they silently stop agreeing.
-  preflight_py="$repo_root/scripts/preflight-plugin.py"
-  if [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
-    if ! "${SIGMA_PYTHON:-python3}" - "$preflight_py" "$src/index.html" <<'PYGATE'
-import importlib.util, pathlib, sys
-spec = importlib.util.spec_from_file_location("_pf", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-rep = mod.Report()
-mod.check_react_before_sdk(rep, mod.strip_comments(pathlib.Path(sys.argv[2]).read_text()))
-sys.exit(1 if rep.failed else 0)
-PYGATE
-    then
-      echo "  Put this BEFORE the SDK script tag:" >&2
-      echo '    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>' >&2
-      gate_fail=1
-    fi
+# --- Build -----------------------------------------------------------------
+if [ ! -f "$src/package.json" ]; then
+  echo "deploy-plugin: plugins/$name has no package.json." >&2
+  echo "" >&2
+  if [ -f "$src/index.html" ]; then
+    echo "  It looks like a hand-written single-file plugin. That archetype was" >&2
+    echo "  removed: every plugin is a Vite + React project now, and this script" >&2
+    echo "  will not publish anything else." >&2
+    echo "" >&2
+    echo "  Already-deployed single-file plugins keep serving from their existing" >&2
+    echo "  URLs -- nothing was taken down -- but they cannot be re-deployed until" >&2
+    echo "  they are ported. To port one: scaffold a replacement, move the drawing" >&2
+    echo "  code into src/App.jsx, and bind via the SDK hooks instead of" >&2
+    echo "  window.SigmaPlugin." >&2
   else
-    # Fallback when preflight-plugin.py is absent: same rule, comment-blind.
-    # `|| true` is load-bearing under `set -e -o pipefail` -- a no-match grep
-    # exits 1, which would abort silently in the very case this explains.
-    sdk_line=$(grep -nE '<script[^>]*unpkg\.com/@sigmacomputing/plugin' "$src/index.html" \
-                 | head -1 | cut -d: -f1 || true)
-    react_line=$(grep -nE '<script[^>]*/react(@[0-9][^/"]*)?/umd/react[.-]' "$src/index.html" \
-                   | head -1 | cut -d: -f1 || true)
-    if [ -n "$sdk_line" ] && { [ -z "$react_line" ] || [ "$react_line" -gt "$sdk_line" ]; }; then
-      echo "deploy-plugin: loads the Sigma SDK UMD bundle without loading React first." >&2
-      echo "  SigmaPlugin.client would be undefined and the plugin would render its" >&2
-      echo "  fallback forever, with only an uncaught 'u.createContext is not a" >&2
-      echo "  function' in the console. Put BEFORE the SDK script tag:" >&2
-      echo '    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>' >&2
-      gate_fail=1
-    fi
+    echo "  Scaffold one with: bash scripts/new-plugin.sh $name" >&2
   fi
-  [ "$gate_fail" -eq 0 ] || { echo "deploy-plugin: refusing to publish plugins/$name." >&2; exit 1; }
+  echo "" >&2
+  echo "  See docs/plugins.md." >&2
+  exit 1
+fi
+
+archetype="react"
+command -v npm >/dev/null 2>&1 || {
+  echo "deploy-plugin: npm is not on PATH, and every plugin needs a build." >&2; exit 1; }
+
+if ! grep -q '@sigmacomputing/plugin' "$src/package.json"; then
+  echo "deploy-plugin: plugins/$name/package.json does not depend on" >&2
+  echo "  @sigmacomputing/plugin -- it cannot talk to Sigma." >&2
+  exit 1
+fi
+
+# Static gates before the build, so a failure costs a second rather than a
+# full npm install. preflight-plugin.py owns the rules; this imports it rather
+# than reimplementing, because two copies of a check are how they silently
+# stop agreeing. pipeline.sh runs the full preflight, but deploy-plugin.sh is
+# callable on its own -- which is exactly how a broken plugin shipped once.
+preflight_py="$repo_root/scripts/preflight-plugin.py"
+if [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
+  if ! "${SIGMA_PYTHON:-python3}" "$preflight_py" "$name" >&2; then
+    echo "deploy-plugin: refusing to publish plugins/$name -- preflight failed." >&2
+    exit 1
+  fi
+fi
+
+if [ ! -d "$src/node_modules" ]; then
+  echo "Installing dependencies for $name ..." >&2
+  ( cd "$src" && { [ -f package-lock.json ] && npm ci --silent || npm install --silent; } ) >&2
+fi
+echo "Building $name ..." >&2
+( cd "$src" && npm run build --silent ) >&2
+
+publish_dir="$src/dist"
+[ -f "$publish_dir/index.html" ] || {
+  echo "deploy-plugin: build produced no dist/index.html." >&2; exit 1; }
+
+# The failure this catches is invisible: with Vite's default `base: '/'` the
+# built page references /assets/index-xxx.js, which 404s under the Pages
+# subpath. The HTML loads, the bundle doesn't, and Sigma shows a blank
+# iframe with nothing in any log.
+if grep -qE '(src|href)="/(assets|static)/' "$publish_dir/index.html"; then
+  echo "deploy-plugin: dist/index.html references assets at an ABSOLUTE path" >&2
+  echo "  (/assets/... or /static/...), which will 404 under" >&2
+  echo "  $HOST_URL/plugins/$name/ and render a blank iframe." >&2
+  echo "  Set \`base: './'\` in vite.config.js and rebuild." >&2
+  exit 1
 fi
 
 if grep -rq '__PLUGIN_TITLE__' "$publish_dir" 2>/dev/null; then

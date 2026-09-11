@@ -86,11 +86,24 @@ export default function App() {
   }, [data, config.sort]);
 
   // Sigma documents no resize event and no auto-height, so observe the frame.
+  //
+  // The size comparison is load-bearing, not defensive noise. Bumping state
+  // re-renders this component, which rewrites DOM *inside* the observed
+  // element -- so an unguarded `new ResizeObserver(() => bump(...))` can feed
+  // itself forever, pinning a CPU core with nothing in the console. Only
+  // re-render when the box actually changed size.
   const wrapRef = useRef(null);
+  const lastSize = useRef({ w: 0, h: 0 });
   const [, bump] = useState(0);
   useEffect(() => {
     if (!window.ResizeObserver) return;
-    const ro = new ResizeObserver(() => bump((n) => n + 1));
+    const ro = new ResizeObserver(() => {
+      const w = document.body.clientWidth;
+      const h = document.body.clientHeight;
+      if (w === lastSize.current.w && h === lastSize.current.h) return;
+      lastSize.current = { w, h };
+      bump((n) => n + 1);
+    });
     ro.observe(document.body);
     return () => ro.disconnect();
   }, []);

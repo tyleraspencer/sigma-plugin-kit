@@ -101,49 +101,75 @@ REACT_TAG = re.compile(r"""<script[^>]*\bsrc\s*=\s*["'][^"']*\breact(?:@[\w.\-]+
                        re.I)
 
 
-def check_react_before_sdk(rep, src):
-    """The one that cost this kit the most.
+def check_react_archetype(rep, plugin_dir, html):
+    """Every plugin is a Vite + React project. Nothing else may be deployed.
 
-    React is an *external* of the SDK's UMD build and its factory calls
-    React.createContext at module top level. With no window.React it throws
-    right there: window.SigmaPlugin is left as a bare {} with zero keys,
-    SigmaPlugin.client is undefined, the plugin takes its no-client branch,
-    and it renders fallback data forever. The only symptom anywhere is one
-    uncaught `u.createContext is not a function` in the iframe console.
+    The hand-written single-file archetype -- one index.html pulling the SDK's
+    UMD bundle off a CDN -- was removed because its worst failure is silent.
+    React is an *external* of that bundle and the factory calls
+    React.createContext at module top level, so a page that loads the SDK
+    without loading React first throws there: window.SigmaPlugin is left a bare
+    {} with zero keys, client is undefined, the plugin takes its no-client
+    branch, and it renders fallback data forever. The only symptom anywhere is
+    one uncaught `u.createContext is not a function` in the iframe console.
+
+    Bundling the SDK as an npm dependency makes that unrepresentable, so the
+    rule is enforced here rather than left to a reviewer's eye.
     """
-    sdk = SDK_TAG.search(src)
-    if not sdk:
-        rep.skip("react-before-sdk", "no CDN SDK tag (React archetype bundles its own)")
+    pkg_path = plugin_dir / "package.json"
+    if not pkg_path.is_file():
+        rep.fail("react-archetype",
+                 "no package.json -- every plugin is a Vite + React project, and "
+                 "the single-file archetype is no longer deployable")
         return
-    react = REACT_TAG.search(src)
-    if not react:
-        rep.fail("react-before-sdk",
-                 "loads the SDK UMD bundle but never loads React -- "
-                 "SigmaPlugin.client will be undefined and the plugin will "
-                 "render its fallback forever")
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        rep.fail("react-archetype", "package.json does not parse: %s" % exc)
         return
-    if react.start() > sdk.start():
-        rep.fail("react-before-sdk",
-                 "React tag comes AFTER the SDK tag; the SDK factory needs "
-                 "window.React at parse time")
+    deps = pkg.get("dependencies") or {}
+    missing = [d for d in ("react", "@sigmacomputing/plugin") if d not in deps]
+    if missing:
+        rep.fail("react-archetype",
+                 "package.json is missing dependenc%s: %s"
+                 % ("y" if len(missing) == 1 else "ies", ", ".join(missing)))
         return
-    rep.ok("react-before-sdk", "React loads first")
+    # A CDN script tag in a bundled plugin means someone reintroduced the
+    # archetype by hand, and reintroduced its failure mode with it.
+    if SDK_TAG.search(html):
+        rep.fail("react-archetype",
+                 "index.html loads the SDK from a CDN as well -- a bundled plugin "
+                 "must import the client from @sigmacomputing/plugin, not a script tag")
+        return
+    rep.ok("react-archetype", "Vite + React, SDK bundled from npm")
 
 
 def check_sdk_global(rep, src):
-    """window.sigmaComputing.plugin.client is defined by no published bundle."""
-    has_real = "SigmaPlugin" in src
-    has_myth = "sigmaComputing" in src
-    if has_real and not has_myth:
-        rep.ok("sdk-global", "reads window.SigmaPlugin")
-    elif has_real and has_myth:
-        rep.warn("sdk-global",
-                 "references sigmaComputing as well -- harmless only if it is "
-                 "a fallback after SigmaPlugin")
+    """A bundled plugin must import `client`, not reach for a window global.
+
+    `window.sigmaComputing.plugin.client` is defined by no published bundle,
+    and `window.SigmaPlugin` only exists when the UMD build is loaded from a
+    script tag -- which a React plugin never does. Either one appearing in a
+    bundled plugin means code was pasted from a single-file example and will
+    read undefined at runtime.
+    """
+    if "sigmaComputing" in src:
+        rep.fail("sdk-global",
+                 "references window.sigmaComputing, which no published bundle "
+                 "defines -- import { client } from '@sigmacomputing/plugin'")
+        return
+    if "SigmaPlugin" in src:
+        rep.fail("sdk-global",
+                 "references window.SigmaPlugin, which only exists when the UMD "
+                 "build is loaded from a script tag -- a bundled plugin must "
+                 "import { client } from '@sigmacomputing/plugin'")
+        return
+    if re.search(r"""from\s+['"]@sigmacomputing/plugin['"]""", src):
+        rep.ok("sdk-global", "imports the client from @sigmacomputing/plugin")
     else:
         rep.fail("sdk-global",
-                 "never references SigmaPlugin; window.sigmaComputing.plugin.client "
-                 "is defined by no published bundle, so client will be null")
+                 "never imports from '@sigmacomputing/plugin' -- the plugin has "
+                 "no way to talk to Sigma")
 
 
 def check_resize_observer(rep, src):
@@ -295,7 +321,7 @@ def main():
     src = strip_comments(raw)
 
     rep = Report()
-    check_react_before_sdk(rep, strip_comments(html))
+    check_react_archetype(rep, plugin_dir, strip_comments(html))
     check_sdk_global(rep, src)
     check_resize_observer(rep, src)
     cols = check_editor_panel(rep, builder, src_file)

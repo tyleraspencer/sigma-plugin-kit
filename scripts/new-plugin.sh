@@ -2,38 +2,42 @@
 # Scaffold a new plugin.
 #
 # Usage:
-#   bash scripts/new-plugin.sh <plugin-name> ["Display Title"] [--react]
+#   bash scripts/new-plugin.sh <plugin-name> ["Display Title"]
 #
 #   <plugin-name>   kebab-case; becomes the directory name and the URL path
 #                   segment, so it must be URL-safe.
 #   "Display Title" optional; defaults to the name title-cased.
-#   --react         scaffold a Vite + React project instead of a single file.
 #
-# Which archetype:
+# Every plugin is a Vite + React project. There is no hand-written-HTML
+# archetype: it was removed deliberately, not lost. A single index.html
+# loading the SDK's UMD bundle from a CDN looks simpler and costs more --
+# React is an external of that bundle, so the page has to load React first or
+# the SDK never initializes and the plugin silently renders fallback data
+# forever. Bundling the SDK as an npm dependency makes that failure
+# unrepresentable, and npm packages (Plotly, Mapbox, D3, Recharts) are
+# available the moment you want one.
 #
-#   single file (default)  One index.html, SDK from unpkg as UMD, no build.
-#                          Right for hand-rolled DOM/SVG/canvas. Fastest
-#                          iteration -- open the file in a browser and it
-#                          renders its demo data.
+# deploy-plugin.sh builds the project and publishes dist/, and refuses any
+# plugin without a package.json.
 #
-#   --react                A Vite project using the SDK's React hooks. Right
-#                          the moment you need npm packages -- Plotly, Mapbox,
-#                          D3, Recharts. deploy-plugin.sh builds it for you.
-#
-# Both are gitignored working directories; the public host repo holds the
-# deployed copy. See docs/plugins.md.
+# The scaffolded directory is a gitignored working directory; the public host
+# repo holds the deployed copy. See docs/plugins.md.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 name=""
 title=""
-archetype="single"
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --react) archetype="react"; shift ;;
-    --single) archetype="single"; shift ;;
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Accepted and ignored: --react was how you opted IN to this archetype
+    # back when there were two, so an old command line still works.
+    --react) shift ;;
+    --single)
+      echo "new-plugin: the single-file archetype has been removed -- every plugin" >&2
+      echo "  is a Vite + React project now. Drop --single; see docs/plugins.md." >&2
+      exit 2 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "new-plugin: unknown option '$1'" >&2; exit 2 ;;
     *)
       if [ -z "$name" ]; then name="$1"
@@ -45,13 +49,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$name" ]; then
-  echo "usage: new-plugin.sh <plugin-name> [\"Display Title\"] [--react]" >&2
+  echo "usage: new-plugin.sh <plugin-name> [\"Display Title\"]" >&2
   exit 2
 fi
 
 # The name lands in a filesystem path AND a public URL, so reject anything
 # that would need escaping in either -- including a leading '_', which marks
-# the templates themselves.
+# the template and the verification harness.
 case "$name" in
   _*|*[!a-z0-9-]*|-*|*-)
     echo "new-plugin: '$name' must be lowercase kebab-case (a-z, 0-9, internal hyphens)." >&2
@@ -70,11 +74,7 @@ if [ -z "$title" ]; then
     | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')"
 fi
 
-if [ "$archetype" = "react" ]; then
-  src="$repo_root/plugins/_react-template"
-else
-  src="$repo_root/plugins/_template"
-fi
+src="$repo_root/plugins/_react-template"
 [ -d "$src" ] || { echo "new-plugin: template missing at $src" >&2; exit 1; }
 
 # Copy, then substitute placeholders in every text file. python, not sed: a
@@ -100,20 +100,13 @@ for p in sorted(dest.rglob('*')):
 PY
 
 echo ""
-echo "Created plugins/$name  ($archetype archetype, title: $title)"
+echo "Created plugins/$name  (Vite + React, title: $title)"
 echo ""
 echo "Next:"
-if [ "$archetype" = "react" ]; then
-  echo "  1. cd plugins/$name && npm install && npm run dev     # http://localhost:5173"
-  echo "     Point a Sigma plugin element at that URL to iterate live:"
-  echo "     element ••• menu -> Point to Development URL."
-  echo "  2. Edit src/App.jsx -- the editor panel is declared at module scope."
-  echo "  3. bash scripts/pipeline.sh $name \"$title\"            # builds, deploys, registers, publishes"
-else
-  echo "  1. Open plugins/$name/index.html in a browser -- it renders demo data"
-  echo "     with no Sigma client, so you can iterate without deploying."
-  echo "  2. Edit DEFS and draw()."
-  echo "  3. bash scripts/pipeline.sh $name \"$title\"            # deploys, registers, publishes"
-fi
+echo "  1. cd plugins/$name && npm install && npm run dev     # http://localhost:5173"
+echo "     Point a Sigma plugin element at that URL to iterate live:"
+echo "     element ••• menu -> Point to Development URL."
+echo "  2. Edit src/App.jsx -- the editor panel is declared at module scope."
+echo "  3. bash scripts/pipeline.sh $name \"$title\"            # builds, deploys, registers, publishes"
 echo ""
 echo "  Editor-panel types, variables, actions: docs/plugin-api.md"
