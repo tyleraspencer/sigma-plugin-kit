@@ -32,6 +32,12 @@ A Sigma plugin is an iframe web app. It needs no bundler and no manifest — a
 single hosted `index.html` is genuinely sufficient. `scripts/new-plugin.sh`
 copies `plugins/_template/index.html` and substitutes the title.
 
+`plugins/<name>/` is a **gitignored working directory**. The public host repo
+is the single source of truth for deployed HTML; tracking a second copy here
+would drift from what Sigma actually loads with nothing comparing the two.
+Only the template is tracked, which is why the HTML gates live in
+`deploy-plugin.sh` rather than CI.
+
 ### The SDK global is not what most examples say
 
 The UMD bundle at `https://unpkg.com/@sigmacomputing/plugin` defines exactly

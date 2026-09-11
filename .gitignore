@@ -31,6 +31,9 @@ workbooks/
 # $SIGMA_STATE_DIR when no keychain exists -- _state.sh hard-refuses a
 # $SIGMA_STATE_DIR that resolves inside this repo.
 
-# Packaged skill ZIPs (scripts/package-skill.sh output) and its stamp file
-dist/
-_PACKAGED_FROM.txt
+# Scaffolded plugins are working files, not kit content. The public host repo
+# (tyleraspencer/sigma-plugins) is the single source of truth for deployed
+# plugin HTML -- keeping a second copy here drifts silently, since nothing
+# compares them. Only the template new-plugin.sh copies from is tracked.
+plugins/*/
+!plugins/_template/

@@ -70,12 +70,30 @@ accepts literal rows — `sql`, `custom-sql`, `customSql`, `warehouse-sql`,
 empty, the plugin falls back to its own hardcoded demo data, and you ship a
 chart of fake numbers that looks real. Bind to a real table.
 
+## Where plugins live
+
+The public host repo (`tyleraspencer/sigma-plugins`) is the **single source of
+truth** for deployed plugin HTML. `plugins/<name>/` here is a gitignored
+working directory: you scaffold into it, edit, and `deploy-plugin.sh` pushes
+the result to the host repo.
+
+Only `plugins/_template/` is tracked. Committing deployed plugins here too
+would mean two copies with nothing comparing them — the kit's copy could drift
+from what Sigma actually loads and nothing would notice.
+
+Because the kit doesn't track them, the HTML gates (SigmaPlugin global, SDK
+loaded, no leftover placeholder) run in `deploy-plugin.sh` rather than CI —
+deploy is the last moment the content is private and the only moment a check
+can stop a broken plugin from getting a public URL and a `pluginId`.
+`deploy-plugin.sh` also byte-compares what Pages serves against your local
+file, so a stale Pages build can't masquerade as a successful deploy.
+
 ## Layout
 
 ```
 plugins/
-  _template/index.html        the plugin new-plugin.sh copies from
-  <name>/index.html           your plugins, deployed to the public host repo
+  _template/index.html        the only HTML this repo tracks; new-plugin.sh copies it
+  <name>/index.html           gitignored working files -- see "Where plugins live"
 scripts/
   pipeline.sh                 all four steps in one command; start here
   new-plugin.sh               1. scaffold plugins/<name>/

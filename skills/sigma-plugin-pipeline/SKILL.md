@@ -24,6 +24,10 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
 Then edit `plugins/<plugin-name>/index.html` and re-run. Re-running reuses the
 registration rather than minting a second `pluginId`.
 
+`plugins/<plugin-name>/` is a gitignored working directory — the public host
+repo holds the deployed copy. Don't try to commit a plugin to this repo; only
+`plugins/_template/` is tracked.
+
 Do the steps by hand only when something fails or the shape is unusual.
 
 ## Data: default to the sample retail table. Do not build input tables.
@@ -108,7 +112,8 @@ The SDK's UMD bundle defines **one** global: `window.SigmaPlugin`, client at
 `SigmaPlugin.client`. `window.sigmaComputing.plugin.client` is a
 widely-copied pattern that **no published bundle defines** — a plugin reading
 it gets `client === null` and renders its fallback forever, looking fine in a
-screenshot. CI gates this.
+screenshot. `deploy-plugin.sh` refuses to publish a plugin that doesn't
+reference `SigmaPlugin`.
 
 - `configureEditorPanel(DEFS)` — each `name` is the config key *and* the key
   a workbook spec's plugin `config` must use. Renaming one silently unbinds

@@ -137,36 +137,32 @@ jobs:
             fi
           done < <(git ls-files -s scripts/api/*.sh)
           exit "$fail"
-      # --- Plugin HTML gates. Both failures here are invisible at runtime:
-      # --- a plugin reading the wrong SDK global silently renders its
-      # --- synthetic fallback forever, and an unsubstituted title placeholder
-      # --- ships to a public URL. See docs/plugins.md.
-      - name: plugin HTML sanity
+      # --- The plugin template is the only HTML this repo tracks: deployed
+      # --- plugins live in the public host repo, and deploy-plugin.sh gates
+      # --- them at the moment they become a public URL. This just keeps the
+      # --- thing new-plugin.sh copies from honest. ---
+      - name: plugin template sanity
         if: runner.os != 'Windows'
         shell: bash
         run: |
           python3 - <<'PY'
-          import glob, sys
+          import sys
+          p = 'plugins/_template/index.html'
+          html = open(p, encoding='utf-8').read()
           fail = 0
-          paths = sorted(p for p in glob.glob('plugins/*/index.html'))
-          if not paths:
-              print('no plugins/*/index.html found', file=sys.stderr)
-              sys.exit(1)
-          for p in paths:
-              html = open(p, encoding='utf-8').read()
-              is_template = p.startswith('plugins/_')
-              if 'SigmaPlugin' not in html:
-                  print(f'{p}: does not reference window.SigmaPlugin -- the UMD bundle '
-                        f'defines no other global, so client would be null and the '
-                        f'plugin would silently render only its fallback.', file=sys.stderr)
-                  fail = 1
-              if '__PLUGIN_TITLE__' in html and not is_template:
-                  print(f'{p}: unsubstituted __PLUGIN_TITLE__ placeholder.', file=sys.stderr)
-                  fail = 1
-              if 'unpkg.com/@sigmacomputing/plugin' not in html:
-                  print(f'{p}: does not load the Sigma plugin SDK.', file=sys.stderr)
-                  fail = 1
-              print(f'checked {p}')
+          if 'SigmaPlugin' not in html:
+              print(f'{p}: does not reference window.SigmaPlugin -- the UMD bundle '
+                    f'defines no other global, so every plugin scaffolded from this '
+                    f'template would silently render only its fallback.', file=sys.stderr)
+              fail = 1
+          if 'unpkg.com/@sigmacomputing/plugin' not in html:
+              print(f'{p}: does not load the Sigma plugin SDK.', file=sys.stderr)
+              fail = 1
+          if '__PLUGIN_TITLE__' not in html:
+              print(f'{p}: missing the __PLUGIN_TITLE__ placeholder that '
+                    f'new-plugin.sh substitutes.', file=sys.stderr)
+              fail = 1
+          print(f'checked {p}')
           sys.exit(fail)
           PY
 

@@ -42,10 +42,30 @@ if [ ! -f "$src/index.html" ]; then
   exit 1
 fi
 
+# --- Gate the HTML before it becomes a public URL ------------------------
+# These run here rather than in CI because the kit does not track deployed
+# plugins -- plugins/<name>/ is a working file and the host repo is the source
+# of truth. Deploy time is the last moment this content is still private, and
+# the only moment a check can stop a broken plugin from being registered.
+gate_fail=0
 if grep -q '__PLUGIN_TITLE__' "$src/index.html"; then
-  echo "deploy-plugin: plugins/$name/index.html still contains the" >&2
-  echo "  __PLUGIN_TITLE__ placeholder -- scaffold it with new-plugin.sh or" >&2
-  echo "  fill the title in before deploying." >&2
+  echo "deploy-plugin: still contains the __PLUGIN_TITLE__ placeholder." >&2
+  gate_fail=1
+fi
+if ! grep -q 'SigmaPlugin' "$src/index.html"; then
+  echo "deploy-plugin: does not reference window.SigmaPlugin." >&2
+  echo "  That is the only global the UMD bundle defines, so the client would" >&2
+  echo "  be null and the plugin would silently render its fallback forever --" >&2
+  echo "  looking fine in a screenshot while never binding a real column." >&2
+  echo "  See docs/plugins.md -> 'The SDK global is not what most examples say'." >&2
+  gate_fail=1
+fi
+if ! grep -q 'unpkg.com/@sigmacomputing/plugin' "$src/index.html"; then
+  echo "deploy-plugin: does not load the Sigma plugin SDK from unpkg." >&2
+  gate_fail=1
+fi
+if [ "$gate_fail" -ne 0 ]; then
+  echo "deploy-plugin: refusing to publish plugins/$name to a public URL." >&2
   exit 1
 fi
 
@@ -138,7 +158,25 @@ while [ "$attempt" -lt "$max_attempts" ]; do
   if [ "$status" = "200" ]; then
     case "$ctype" in
       text/html*)
-        echo "  serving after ${attempt} check(s): 200 $ctype" >&2
+        # A 200 only proves *something* is served. Confirm it is this file:
+        # Pages can still be serving a previous build, and the whole point of
+        # deploying before registering is that the URL is immutable afterwards.
+        served="$(mktemp "${TMPDIR:-/tmp}/served.XXXXXX")"
+        curl -sSL --connect-timeout 5 --max-time 20 -o "$served" "$url" 2>/dev/null || true
+        if ! cmp -s "$served" "$src/index.html"; then
+          rm -f "$served"
+          if [ "$attempt" -lt "$max_attempts" ]; then
+            echo "  200 but content differs from local -- Pages is still serving an" >&2
+            echo "  older build; waiting (attempt ${attempt})" >&2
+            sleep 6
+            continue
+          fi
+          echo "deploy-plugin: $url serves content that does not match" >&2
+          echo "  plugins/$name/index.html. Pages may be stuck on an older build." >&2
+          exit 1
+        fi
+        rm -f "$served"
+        echo "  serving after ${attempt} check(s): 200 $ctype, bytes match" >&2
         printf '%s\n' "$url"
         exit 0 ;;
       *)
