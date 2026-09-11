@@ -190,3 +190,45 @@ Things worth knowing before you write a panel:
   Do **not** use the old projected-`[controlId]`-column trick; it's retracted.
 - `secure: true` on a `text` entry for an API token.
 - Data is **column-keyed parallel arrays**, capped at 25,000 values.
+
+## Fill the frame, always
+
+**The plugin must paint the entire iframe at whatever size it is given, and
+re-lay-out whenever that size changes.** The workbook author sizes the element,
+not you, and they resize it freely — dragging the element, toggling the editor
+panel, switching to a phone layout, expanding to full screen. A plugin that
+renders at a size it chose itself is wrong at every size but one.
+
+What that means concretely:
+
+- `html, body, #root { height: 100% }` in `index.html`, and the root container
+  `width: 100%; height: 100%`. The template ships this; don't undo it.
+- **No fixed pixel width or height** on the root, the chart, or the canvas —
+  and no `vh`/`vw` either. The iframe is the viewport only by accident; size
+  everything from the parent box.
+- Flex or grid for layout, with `minHeight: 0` on any child that has to shrink
+  or scroll. Without it a flex child refuses to go below its content height and
+  the plugin overflows the frame instead of fitting it.
+- Content that can't fit gets an internal scroll region or drops rows — never
+  an iframe-level scrollbar, and never clipped content with no way to reach it.
+- Nothing may depend on the size at first paint. Sigma mounts the iframe before
+  the element settles, so the first measurement is often `0` — render from the
+  measurement you have now, and re-render when it changes.
+
+Measure with a `ResizeObserver` on `document.body`, and **compare the
+dimensions before re-rendering**. Re-rendering rewrites DOM inside the observed
+element, so an unguarded observer feeds itself forever — a pinned CPU core with
+an empty console. `preflight-plugin.py`'s `resize-observer-guard` check fails
+on an observer with no size comparison; `_react-template/src/App.jsx` has the
+shape to copy.
+
+Charting libraries have their own switch for this — use it instead of hand-
+rolling: Recharts `<ResponsiveContainer>`, Plotly `config={{responsive: true}}`
+with `layout.autosize` and `useResizeHandler`, ECharts `chart.resize()` on the
+observer tick, D3/canvas re-read `clientWidth`/`clientHeight` every tick and
+re-scale the ranges (and multiply by `devicePixelRatio` for canvas).
+
+Verify it: the bind harness from `verify-plugin-binding.py` renders the plugin
+in a resizable iframe. Drag it narrow and tall, then short and wide. Anything
+that clips, letterboxes, or leaves dead space at a size is a bug to fix before
+deploy — after deploy the only way to see it is a Sigma login.

@@ -41,6 +41,18 @@ demonstrates grouped editor-panel options, a `color` picker, a `dropdown`, a
 loading state, a guarded resize observer, and a `variable` write-back that
 cross-filters the workbook.
 
+**Every plugin fills its iframe.** The workbook author sizes the element and
+resizes it freely, and the host reports none of that — so the plugin must paint
+the entire frame at whatever size it lands in and re-lay-out when the size
+changes. That means `height: 100%` down the chain, no fixed `px`/`vh`/`vw` on
+the root or the chart, `min-height: 0` on shrinking flex children, internal
+scroll rather than an iframe scrollbar, and no assumption that the first
+measurement is nonzero. Measure with a `ResizeObserver` on `document.body`,
+guarded by a dimension comparison. The template does all of this; the rule and
+the per-library switches are in [plugin-api.md](plugin-api.md) → "Loading,
+sizing, errors". Drag the harness frames from `verify-plugin-binding.py` narrow
+and wide to check it before deploy.
+
 ### Why there is no hand-written-HTML archetype
 
 A single `index.html` pulling the SDK's UMD bundle off a CDN looks simpler and
@@ -323,6 +335,9 @@ fallback is precisely what renders when nothing resolves.
 ## Gotchas that cost a rebuild
 
 - **`url` is immutable on PATCH.** Deploy and verify, then register.
+- **A plugin sized to anything but 100% of its iframe is wrong.** It looks fine
+  in the one screenshot you took and clips or letterboxes for the author the
+  moment they resize the element. See "Build", above.
 - **Controls bind to a plugin directly** — declare a `variable` in the editor
   panel and read/write it with `getVariable`/`setVariable`. It works in both
   directions, so a plugin can also cross-filter the workbook by writing a

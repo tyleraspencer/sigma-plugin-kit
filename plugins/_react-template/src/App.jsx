@@ -85,7 +85,11 @@ export default function App() {
     return copy.slice(0, 12);
   }, [data, config.sort]);
 
-  // Sigma documents no resize event and no auto-height, so observe the frame.
+  // Sigma documents no resize event, no auto-height and no size in config --
+  // yet the author resizes this element whenever they like. So the plugin
+  // fills 100% of the iframe and re-lays-out off an observed size. Anything
+  // sized in px/vh/vw, or laid out from the size at first paint (often 0),
+  // is correct at exactly one size.
   //
   // The size comparison is load-bearing, not defensive noise. Bumping state
   // re-renders this component, which rewrites DOM *inside* the observed

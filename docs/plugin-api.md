@@ -251,8 +251,31 @@ favour of the Action API.
 
 - **Loading:** `useLoadingState(true)`, or `config.setLoadingState(false)` when
   your first render completes.
-- **Sizing: not covered by any documentation.** No resize event, no auto-height.
-  Use a `ResizeObserver` inside the iframe and re-layout yourself.
+- **Sizing: not covered by any documentation.** No resize event, no auto-height,
+  no size in `config`. The host sizes the iframe from the workbook element and
+  tells you nothing about it.
+
+  The rule this kit holds plugins to: **fill the whole iframe at any size, and
+  re-lay-out when it changes.** The author sizes and resizes the element at
+  will, so the only sizes a plugin can be correct at are *all of them*.
+
+  - `html, body, #root { height: 100% }`; root container `width:100%;height:100%`.
+  - No fixed `px` on the root/chart/canvas, and no `vh`/`vw` — the iframe is the
+    viewport only by accident. Size from the parent box.
+  - Flex or grid, with `min-height: 0` on children that must shrink or scroll;
+    without it a flex child won't go below its content height and the plugin
+    overflows rather than fits.
+  - Overflow goes in an internal scroll region, never an iframe scrollbar.
+  - The first measurement is often `0` — the iframe mounts before the element
+    settles. Render from whatever you measure now; re-render on change.
+
+  Measure with a `ResizeObserver` on `document.body` and **compare the
+  dimensions before re-rendering** — the callback rewrites DOM inside the
+  observed node, so an unguarded one loops forever (`preflight-plugin.py`'s
+  `resize-observer-guard` fails it; the template has the shape to copy).
+  Library-side: Recharts `<ResponsiveContainer>`, Plotly `responsive: true` +
+  `layout.autosize` + `useResizeHandler`, ECharts `chart.resize()` on the tick,
+  D3/canvas re-read `clientWidth`/`clientHeight` and re-scale every tick.
 - **Errors and empty data: not covered either.** There's no error channel, so
   render your own empty state. The one documented error semantic is in
   incremental delivery: a failed eval arrives as a `null` payload that

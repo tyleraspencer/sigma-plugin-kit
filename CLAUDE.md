@@ -24,6 +24,7 @@ some other reason doesn't step on one:
 - Plugin hosting must be a **public** repo; this one is private on purpose.
 - Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
+- A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px.
 - `Invalid kind: "<kind>"` means a *field* has a bad value shape.
 - HTTP 200 does not mean it worked. Check the compiled SQL.
 - Use `scripts/pipeline.sh` rather than running the four steps by hand.

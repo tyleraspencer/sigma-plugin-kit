@@ -5,8 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>__PLUGIN_TITLE__</title>
     <style>
+      /* The plugin must fill its iframe at ANY size the workbook author gives
+         it. Height has to be declared down the whole chain -- html, body and
+         #root -- or a percentage height on the app root resolves to auto and
+         the plugin collapses to its content. Never swap these for px/vh/vw. */
       *{ box-sizing: border-box; margin: 0; padding: 0; }
-      html, body, #root { height: 100%; }
+      html, body, #root { width: 100%; height: 100%; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Arial, sans-serif;
         background: transparent;

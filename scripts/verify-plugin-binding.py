@@ -93,7 +93,12 @@ PAGE = r"""<!doctype html>
   .frame{flex:1}
   .frame h2{font-size:10px;letter-spacing:.08em;text-transform:uppercase;
             color:#64748b;margin:0 0 6px}
-  iframe{width:100%;height:300px;border:1px solid #1e293b;border-radius:6px;background:#fff}
+  /* resize:both so you can drag each frame and confirm the plugin re-lays-out
+     at any size -- Sigma's element is author-sized and resized freely. */
+  iframe{width:100%;height:300px;min-width:120px;min-height:100px;
+         resize:both;overflow:auto;
+         border:1px solid #1e293b;border-radius:6px;background:#fff}
+  .frame .hint{font-size:10px;color:#475569;margin-top:4px}
 </style>
 </head>
 <body>
@@ -103,8 +108,8 @@ PAGE = r"""<!doctype html>
 <table id="checks"></table>
 
 <div class="frames">
-  <div class="frame"><h2>A — unbound</h2><iframe id="fa"></iframe></div>
-  <div class="frame"><h2>B — bound</h2><iframe id="fb"></iframe></div>
+  <div class="frame"><h2>A — unbound</h2><iframe id="fa"></iframe><div class="hint">drag the corner to resize — the plugin must fill any box</div></div>
+  <div class="frame"><h2>B — bound</h2><iframe id="fb"></iframe><div class="hint">drag the corner to resize — the plugin must fill any box</div></div>
 </div>
 
 <script>
