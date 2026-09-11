@@ -149,3 +149,20 @@ Pull the current value from a live workbook instead:
 ```bash
 scripts/api/publish-workbook.sh get-spec <reference-workbook-id>
 ```
+
+## Deleting a workbook goes through /v2/files
+
+`DELETE /v2/workbooks/{id}` is **404** — the verb does not exist on that
+resource, and the empty body reads like an auth or id problem rather than a
+wrong endpoint. Workbooks are files:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  "$SIGMA_BASE_URL/v2/files/<workbookId>"   # -> 200 {}
+```
+
+Verified 2026-09-11. The same id works in both places, which is why the 404 is
+confusing: `GET /v2/workbooks/{id}` on that exact id returns the workbook.
+`/v2/files?parentId=<folder>&limit=500` is also the reliable way to find a
+workbook by name — `/v2/workbooks?limit=200` did not list a workbook that had
+just been created in a personal folder.
