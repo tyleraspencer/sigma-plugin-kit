@@ -8,8 +8,9 @@ part that saves the next debugging session.
 
 Everything here is about the API and its wire formats. The *authoring
 conventions* for workbook specs — naming, layout, which rules
-`validate-spec.py` enforces and why — are deliberately not in this repo; see
-[provenance.md](provenance.md).
+`validate-spec.py` enforces and why — are deliberately not in this repo; they
+live upstream in
+[ryan-workbook-skill](https://github.com/RyanLauderback/ryan-workbook-skill).
 
 ## The document wrapper
 

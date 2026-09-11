@@ -5,10 +5,13 @@ This repository is an extraction from:
     Copyright (c) Ryan Lauderback
 
 The scripts/api/ auth and CRUD layer, doctor.sh and validate-spec.py
-originate there, with local modifications documented in docs/provenance.md.
-Other inherited tooling (sigma-resolve.py, workbook-manifest.py,
-harvest-workbook.sh, the Cowork/Cortex skill-packaging harness, and 12 of
-validate-spec.py's checks) has since been removed as unused here.
+originate there, with local modifications: a new scripts/load-env.sh, a
+separate state directory so this kit's refresh token does not collide with
+the upstream skill's, trimmed CI, and validate-spec.py reduced to the checks
+this kit can actually fire. Other inherited tooling (sigma-resolve.py,
+workbook-manifest.py, harvest-workbook.sh, the Cowork/Cortex skill-packaging
+harness, and 12 of validate-spec.py's checks) has since been removed as
+unused here.
 
 Plugin conventions -- the single-file index.html pattern, the SDK-from-unpkg
 approach, the synthetic-fallback idea, and POST /v2/plugins registration --

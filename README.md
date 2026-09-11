@@ -140,7 +140,6 @@ docs/
   elements-known-good.md      verified element shapes -- copy, don't invent
   auth.md                     auth ladder, credential tiers, Cowork, egress hosts
   api-notes.md                wire formats and error modes
-  provenance.md               what came from where, and what changed
 ```
 
 The numbered scripts are the four pipeline steps; `pipeline.sh` runs all of

@@ -10,7 +10,7 @@ Read `docs/plugins.md` before touching the pipeline. The
 `sigma-plugin-pipeline` skill is the operating manual for running it.
 
 Extracted from `ryan-workbook-skill` with plugin conventions from
-`millersigma`; see `NOTICE` and `docs/provenance.md`.
+`millersigma`; see `NOTICE`.
 
 ## The traps, in one line each
 
