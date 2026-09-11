@@ -162,7 +162,23 @@ The plugin element:
 
 Config bindings are **bare column-ID strings**, keyed by the `DEFS` names.
 `kind: "plugin"` is undocumented in Sigma's spec API (the spec endpoints are
-private Beta) but verified working against a live org.
+private Beta) but **verified working end-to-end** — POSTed and GET-back
+byte-for-byte on papercrane 2026-09-11, `pluginId` and `config` intact.
+
+Two field-name traps in the surrounding elements, both of which fail with a
+message that blames the element kind rather than the field:
+
+- A **text** element's content field is **`body`** and takes markdown. There
+  is no `text` or `variant` field; supplying them fails with
+  `Invalid kind: "text"`.
+- Sigma **rejects a known field with a bad value shape** and **silently drops
+  unknown field names**. So `Invalid kind: "<kind>"` almost always means "a
+  field you supplied has the wrong value shape", not "this element kind is
+  unsupported". Bisect from a known-good element rather than reading the
+  message literally.
+
+`folderId` is effectively required on POST — omitting it surfaces as
+`Expecting UUID at 0.folderId` inside a large union-type error.
 
 ### Fake data vs. a real table
 
@@ -175,6 +191,26 @@ Sigma cannot pre-populate an input table from a spec: `insert-rows` is a
 runtime action effect and **one effect inserts exactly one row**. So the
 generated button carries one effect per row, and someone must open the
 workbook and click it once. Say so when you hand the workbook over.
+
+> **`insert-rows` is currently rejected on papercrane** (verified live
+> 2026-09-11). POST fails with `document.elements[N]: Invalid kind: "button"`
+> — a message that blames the element kind rather than the effect. Bisected
+> against a known-good baseline: a button carrying `set-control-value`
+> publishes fine, and the same button carrying `insert-rows` does not. Every
+> shape was tried — `values` as dynamic-value objects and as plain scalars, a
+> `rows[]` array, `elementId` instead of `table`, no `values` at all,
+> `inputMode: "edit"` — all fail identically. `delete-rows` and `open-url`
+> fail the same way, so it is the effect object, not `insert-rows` alone.
+> An empty `effects: []` gives a *different*, structural error ("an action
+> must have at least one effect"), which proves the surrounding
+> `actions`/`effects` shape is parsed correctly.
+>
+> The upstream reference documents these as POST-verified on 2026-08-04, so
+> this looks like drift or org-level gating rather than a wrong shape.
+>
+> **Workaround:** `--no-seed` emits the input table with no button. It
+> publishes cleanly; paste the rows into the table in the UI. `--data` is
+> still required, since it defines the columns and their types.
 
 Even a fake-data input table is warehouse-backed, so `--connection-id` is
 required in both modes (`source: {kind: "empty", connectionId}`).

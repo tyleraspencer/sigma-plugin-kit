@@ -129,6 +129,18 @@ exactly one row. The generated workbook therefore carries a "Seed demo data"
 button holding one effect per row. Tell the user plainly: open the workbook and
 click it once. Don't report the build as finished without saying so.
 
+**If POST fails with `Invalid kind: "button"`, add `--no-seed` and re-run.**
+`insert-rows` is rejected outright on papercrane as of 2026-09-11 (bisected:
+the same button carrying `set-control-value` publishes fine). `--no-seed`
+emits the input table with no button; it publishes cleanly and the rows get
+pasted in by hand. Full evidence in `docs/plugins.md`.
+
+**Read `Invalid kind: "<kind>"` as "a field has the wrong value shape",** not
+as "this element kind is unsupported". Sigma rejects known fields with bad
+shapes and silently drops unknown field names. A text element's content field
+is `body`, not `text`/`variant`, and getting that wrong reports
+`Invalid kind: "text"`. Bisect from a known-good element.
+
 ## Verify before claiming success
 
 A plugin element that publishes cleanly and renders blank is the normal failure

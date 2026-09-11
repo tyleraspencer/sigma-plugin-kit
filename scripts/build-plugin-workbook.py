@@ -122,6 +122,9 @@ def build_fake(args, rows):
         if values:
             effects.append({"effect": "insert-rows", "table": "tbl-data", "values": values})
 
+    if args.no_seed:
+        return [table], by_name, "tbl-data"
+
     seed_button = {
         "id": "btn-seed",
         "kind": "button",
@@ -209,6 +212,12 @@ def main():
     ap.add_argument("--bind", action="append", default=[], metavar="KEY=COLUMN",
                     help="plugin config binding; repeatable")
     ap.add_argument("--title", help="on-canvas title (defaults to --name)")
+    ap.add_argument("--no-seed", action="store_true",
+                    help="fake mode: emit the input table with no seed button. Use where "
+                         "the org's spec schema rejects the insert-rows effect (verified "
+                         "live on papercrane 2026-09-11 -- see docs/plugins.md); paste the "
+                         "rows into the input table by hand instead. --data is still "
+                         "required, to define the columns and their types.")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
@@ -256,11 +265,17 @@ def main():
         "config": config,
     }
 
+    # A text element's content field is `body`, and it takes markdown (inline
+    # HTML/`<span style=...>` works too). There is no `text` or `variant`
+    # field: supplying them fails POST with `Invalid kind: "text"`, which reads
+    # like the element kind is unsupported rather than "you used the wrong
+    # field name". Sigma rejects a known field with a bad value shape and
+    # silently drops unknown field names, so that message is what a bad
+    # content field looks like.
     title = {
         "id": "txt-title",
         "kind": "text",
-        "text": args.title or args.name,
-        "variant": "h2",
+        "body": "**%s**" % (args.title or args.name),
     }
 
     elements = [title] + data_elements + [plugin]
