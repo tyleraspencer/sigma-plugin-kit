@@ -167,6 +167,54 @@ declared in `configureEditorPanel`.
 }
 ```
 
+## plugin — bound to a control (a `variable` binding)
+
+A plugin's `variable` editor-panel entry binds through `config`, keyed by the
+panel entry's `name` — but unlike a column binding, **the value is an object**.
+This is what lets a plugin write a selection back into the workbook;
+`setVariable(<panel name>, ...values)` lands in the bound control.
+
+```json
+{ "id": "ctl-selectedseats", "kind": "control", "controlId": "cSelectedSeats",
+  "name": "Selected seats", "controlType": "list", "selectionMode": "multiple",
+  "source": { "kind": "manual", "valueType": "text",
+              "values": ["A1", "A2", "A3"] } },
+
+{ "id": "plug-viz", "kind": "plugin", "pluginId": "<uuid>",
+  "config": { "source": { "kind": "element", "elementId": "tbl-data" },
+              "seat": "col-seat",
+              "selectedSeats": { "kind": "control",
+                                 "controlId": "cSelectedSeats" } } }
+```
+
+Verified 2026-09-11 on workbook `e894541d-54bc-4858-bfec-5b97b717039a`: POSTed
+and round-tripped through GET unchanged.
+
+**The object form is Sigma's own.** A bare `"selectedSeats": "cSelectedSeats"`
+is also accepted and works, but the moment the workbook is opened in the UI
+Sigma rewrites the whole config to its canonical shape — control bindings to
+`{"kind":"control","controlId":...}` and *column* bindings to
+`{"kind":"column","columnId":...,"source":...}`. Emitting the canonical form
+for the control means the spec matches what a UI edit would produce. Column
+bindings stay bare strings here because that is the form this kit has verified
+end to end.
+
+`selectionMode: "multiple"` is accepted — the docs' `"single"` is not the only
+value. The server adds `mode: "include"` and `values: []` to the control on
+the way in; neither needs to be sent.
+
+**`Control variable name: <id> not found` in published mode, while edit mode
+works, is not a binding bug.** It means the published version predates an edit
+made in the UI — publish the workbook. Anything edited in the browser after an
+API `POST`/`PUT` needs publishing before a viewer sees it, and a plugin's write
+to a control is where that shows up first.
+
+`build-plugin-workbook.py --variable-control BINDING[:COLUMN]` emits both
+halves, taking the control's choices from a data column so every value the
+plugin can write is one the control already accepts. It refuses a BINDING the
+plugin's panel does not declare as a `variable`, because a mismatch there is
+silently absent from `config` rather than an error.
+
 ## button
 
 The `button` kind and its `actions`/`effects` structure are fine; the

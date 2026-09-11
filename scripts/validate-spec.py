@@ -472,6 +472,15 @@ def issues_plugin_refs_resolve(spec: dict) -> list[tuple[str, str]]:
                                 "any element in this spec."))
             continue
 
+        # A `variable` binding carries a controlId, not a column id: it is how
+        # a plugin reads and writes a workbook control. Collect them so they
+        # are not mistaken for broken column bindings below.
+        control_ids = {
+            e.get("controlId")
+            for _, e in all_elements
+            if isinstance(e, dict) and e.get("kind") == "control" and e.get("controlId")
+        }
+
         # Column bindings are bare column-id strings keyed by the names the
         # plugin declared in configureEditorPanel. Anything else that is a
         # plain string is treated as a column binding too -- that is exactly
@@ -485,14 +494,32 @@ def issues_plugin_refs_resolve(spec: dict) -> list[tuple[str, str]]:
             continue
 
         for key, value in config.items():
-            if key == "source" or not isinstance(value, str):
+            if key == "source":
+                continue
+            # Sigma's own canonical form for a control binding, which is what
+            # a workbook it has normalized round-trips as.
+            if isinstance(value, dict) and value.get("kind") == "control":
+                cid = value.get("controlId")
+                if cid not in control_ids:
+                    out.append((
+                        "fail",
+                        f"{loc}: config binding {key!r} names control {cid!r}, which is "
+                        "not the controlId of any control in this spec.",
+                    ))
+                continue
+            if not isinstance(value, str):
+                continue
+            if value in control_ids:
                 continue
             if value not in src_columns:
                 out.append((
                     "fail",
-                    f"{loc}: config binding {key!r} -> {value!r} is not a column on "
-                    f"source element {src_id!r} (kind={src_el.get('kind')!r}). "
-                    f"Available: {', '.join(sorted(src_columns))}",
+                    f"{loc}: config binding {key!r} -> {value!r} is neither a column on "
+                    f"source element {src_id!r} (kind={src_el.get('kind')!r}) nor the "
+                    f"controlId of a control in this spec. "
+                    f"Columns: {', '.join(sorted(src_columns))}"
+                    + (f"; controls: {', '.join(sorted(c for c in control_ids if c))}"
+                       if control_ids else ""),
                 ))
 
     return out
