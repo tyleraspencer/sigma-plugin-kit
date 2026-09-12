@@ -228,6 +228,74 @@ PAGE = r"""<!doctype html>
                : 'none of the bound labels appear in B (' +
                  P.labels.slice(0,3).join(', ') + '…)');
 
+    // The plugin must fill whatever box it is given, at any size. Static
+    // analysis cannot tell a root container from a leaf without guessing, so
+    // this measures instead of reading: resize the bound frame and watch
+    // whether the plugin's own root element follows. A root pinned at 640px
+    // reads 640 at both sizes; a root at 100% tracks the frame exactly.
+    //
+    // This is the check that makes "no fixed px, no vh/vw" enforceable rather
+    // than advice. Its failure mode is otherwise invisible: the plugin is
+    // correct at the one size it was built at, publishes clean, and
+    // screenshots perfectly.
+    probeFill(function(small, big, hSmall, hBig){
+      if (hSmall == null || hBig == null) {
+        add('fills-frame', true, 'could not measure -- skipped');
+      } else {
+        var grew = hBig - hSmall;
+        var expected = big - small;
+        // 60% rather than exact: a root may sit inside padding, and rounding
+        // at two sizes should never be the thing that fails a good plugin.
+        var tracks = grew >= expected * 0.6;
+        var overflows = hSmall > small + 8;
+        add('fills-frame', tracks && !overflows,
+            tracks && !overflows
+              ? 'root tracked the frame (' + hSmall + 'px at ' + small +
+                ', ' + hBig + 'px at ' + big + ')'
+              : (overflows && !tracks
+                  ? 'root stayed ' + hSmall + 'px in a ' + small + 'px frame and ' +
+                    hBig + 'px in a ' + big + 'px one -- it is a FIXED size, so it ' +
+                    'overflows every frame smaller than itself and leaves dead ' +
+                    'space in every larger one'
+                  : overflows
+                      ? 'root is ' + hSmall + 'px in a ' + small + 'px frame -- it ' +
+                        'overflows instead of fitting'
+                      : 'root grew only ' + grew + 'px when the frame grew ' +
+                        expected + 'px -- it is not filling the height it is given'));
+      }
+      render();
+    });
+  }
+
+  // Resize the bound frame between two heights and report what the plugin's
+  // own root element measured at each. Restores the frame afterwards so the
+  // page is left as the reader expects it.
+  function probeFill(done){
+    var f = frames[1], el = f.el, original = el.style.height;
+    var small = 180, big = 520;
+    function rootHeight(){
+      try {
+        var d = f.el.contentDocument;
+        var r = d.getElementById('root');
+        // #root itself is sized by index.html, so measure what the PLUGIN
+        // rendered inside it -- that is the thing under test.
+        var node = (r && r.firstElementChild) || d.body;
+        return Math.round(node.getBoundingClientRect().height);
+      } catch (e) { return null; }
+    }
+    el.style.height = small + 'px';
+    setTimeout(function(){
+      var hSmall = rootHeight();
+      el.style.height = big + 'px';
+      setTimeout(function(){
+        var hBig = rootHeight();
+        el.style.height = original;
+        done(small, big, hSmall, hBig);
+      }, 400);
+    }, 400);
+  }
+
+  function render(){
     var pass = checks.every(function(c){ return c.ok; });
     document.title = pass ? 'HARNESS PASS' : 'HARNESS FAIL';
     var v = document.getElementById('verdict');

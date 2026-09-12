@@ -252,40 +252,27 @@ rows represent.
 
 ## Two gates run before anything irreversible
 
-`pipeline.sh` runs both for you. Reach for them by hand while iterating.
+`pipeline.sh` runs both for you, before deploy, because deploy and register
+are the steps you cannot take back. Run them by hand while iterating:
 
 ```bash
 python3 scripts/preflight-plugin.py <name> [--data FILE]      # static, blocking
 python3 scripts/verify-plugin-binding.py <name> [--data FILE] # renders it twice
 ```
 
-**`preflight-plugin.py` is the one that stops a bad deploy.** Every check in it
-is a mode where the plugin deploys clean, publishes clean, renders its own
-fallback data and screenshots perfectly -- no status code catches any of them.
-It imports `build-plugin-workbook.py`'s *own* panel parser rather than
-re-implementing one, so authoring and building cannot silently disagree about
-the binding contract. It also checks that every `column` binding name has a
-matching header in `--data`, which is the thing that makes all the bindings
-resolve instead of just the first two.
+**Preflight** is static and blocking: every check in it is a mode where the
+plugin deploys clean, publishes clean, and screenshots perfectly. **The bind
+harness** is the only thing that proves the plugin renders *bound* data rather
+than its own fallback — it runs the plugin twice, bound and unbound, compares
+the two, and resizes the frame to check the plugin follows it. No Sigma login,
+no deploy, no network.
 
-**`verify-plugin-binding.py` is the only thing that proves the plugin renders
-bound data.** It generates a local page that runs the plugin twice in isolated
-iframes -- once with nothing bound, once with the real rows in Sigma's
-column-keyed parallel-array shape -- and fails if the two renders are
-identical, because that means the plugin is ignoring its bindings. No Sigma
-login, no deploy, no network. It also reports which declared bindings the
-plugin actually *read*, via a Proxy on the config object.
+Open the URL it prints; the verdict is in `document.title` (`HARNESS PASS` /
+`HARNESS FAIL`) and `window.__HARNESS__`. **Wait for the title to stop saying
+`HARNESS RUNNING`** — read it early and unfinished checks look like failures.
 
-Open the URL it prints. The verdict lands in the page, in `document.title`
-(`HARNESS PASS` / `HARNESS FAIL`) and in `window.__HARNESS__`, so one
-`javascript_tool` call or a glance at the tab title is enough.
-
-The harness iframe is **resizable** — drag it narrow and tall, then short and
-wide, before you call it done. Anything that clips, letterboxes or leaves dead
-space is a bug to fix now; after deploy, seeing it needs a Sigma login the
-in-app browser doesn't have.
-
-Escape hatches, for when a check is wrong rather than the plugin:
+What each check means, and why: `docs/plugins.md` → "The two gates". Escape
+hatches, for when a check is wrong rather than the plugin:
 `SIGMA_SKIP_PREFLIGHT=1`, `SIGMA_SKIP_BINDTEST=1`.
 
 ## Order is not negotiable
@@ -315,48 +302,41 @@ re-checks.
 Hosting must be a **public** repo — Sigma fetches the URL anonymously for the
 iframe.
 
-## Four things that fail silently
+## What fails silently
 
-These are the ones you cannot discover by reading a status code, so they have
-to be in front of you before you write the plugin. Each links to the doc that
-proves it — go there when one actually bites.
+None of these show up in a status code. Most are now caught by a gate rather
+than by you remembering them — those get a line. The last one cannot be
+checked by anything, and gets the space it needs.
 
-**Import the client, never a window global.**
-`import { client } from '@sigmacomputing/plugin'`.
-`window.sigmaComputing.plugin.client` is widely copied and defined by no
-published bundle; `window.SigmaPlugin` is real but exists only under a UMD
-script tag, which a bundled plugin never uses. Either reads `undefined` and the
-plugin renders its fallback forever, looking fine in a screenshot.
-`preflight-plugin.py`'s `sdk-global` check fails both, and `deploy-plugin.sh`
-runs it. → `docs/plugin-api.md` → "Getting the SDK"
+**Caught for you, so just don't fight them.** Write the plugin normally and
+the two gates will tell you if you tripped one; the failure message carries
+the reasoning:
 
-**If the plugin shows its demo data in Sigma, the binding is wrong.** That
-fallback is exactly what renders when nothing resolves — a wrong `pluginId`, a
-config binding naming a column that doesn't exist, a bare `[COLUMN]` on a
-warehouse source. All of them publish with HTTP 200. Don't infer success from a
-200; run `verify-plugin-binding.py`, which reproduces the same
-fallback-vs-bound distinction locally, before deploy. →
-`docs/plugins.md` → "Verifying, and the failures that hide"
+- **Import the client** — `import { client } from '@sigmacomputing/plugin'`,
+  never a window global. (`sdk-global`) → `docs/plugin-api.md` → "Getting the
+  SDK"
+- **Fill the iframe at every size** — `height: 100%` down the chain, no fixed
+  `px`/`vh`/`vw`, `minHeight: 0` on any flex child that must shrink, and a
+  `ResizeObserver` that compares dimensions before re-rendering. The first
+  measurement is often `0`; render from it anyway. (`root-height`,
+  `viewport-units`, `flex-min-height`, `resize-observer-guard`, and
+  `fills-frame`, which resizes the frame and watches whether your root
+  follows.) Per-library switches and the rest → `docs/plugin-api.md` →
+  "Loading, sizing, errors"
+- **Demo data showing in Sigma means the binding is wrong** — not that the
+  plugin is fine. (`binds-vs-fallback`, `bound-values-visible`) →
+  `docs/plugins.md` → "Verifying, and the failures that hide"
 
-**The plugin must fill the whole iframe at any size, and re-lay-out when that
-size changes.** The workbook author sizes and resizes the element; a plugin
-rendering at a size it chose itself is wrong at every size but one. In
-practice: `height: 100%` down the chain, no fixed `px`/`vh`/`vw` anywhere, and
-a `ResizeObserver` on `document.body` that **compares dimensions before
-re-rendering** — an unguarded one rewrites DOM inside the node it observes and
-feeds itself forever, pinning a core with an empty console. The first
-measurement is often `0`; render from it anyway and re-render on change.
-`preflight-plugin.py`'s `resize-observer-guard` fails the unguarded shape and
-`_react-template/src/App.jsx` has the one to copy. Flex `min-height: 0`, the
-per-library switches (Recharts `<ResponsiveContainer>`, Plotly `responsive`,
-ECharts `chart.resize()`, canvas `devicePixelRatio`) and the rest are in →
-`docs/plugin-api.md` → "Loading, sizing, errors"
-
+**No gate can catch this one, so read it now.**
 **`Invalid kind: "<kind>"` means a *field* has the wrong value shape** — not
-that the element kind is unsupported. Sigma rejects known fields carrying bad
-shapes and silently drops unknown field names, so copy element shapes rather
-than inventing them. → `docs/elements-known-good.md`, which has every verified
-shape plus the known-rejected list, and the full decoder
+that the element kind is unsupported. The message comes back from Sigma at
+publish time and says nothing else, so the obvious reading sends you off
+rewriting a perfectly good element as some other kind. Sigma rejects known
+fields carrying bad shapes and silently drops field names it doesn't know, so
+bisect from a known-good shape one field at a time rather than inventing one.
+A *structural* complaint instead ("an action must have at least one effect")
+means that part parsed fine. → `docs/elements-known-good.md`, which has every
+verified shape, the known-rejected list, and the full decoder
 
 ## Before you write a panel
 

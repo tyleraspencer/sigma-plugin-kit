@@ -284,6 +284,127 @@ def check_fallback_visible(rep, src):
                  "binding will look exactly like success")
 
 
+# --- filling the frame --------------------------------------------------
+# The workbook author sizes the element and resizes it freely -- dragging it,
+# toggling the editor panel, switching to a phone layout, going full screen. A
+# plugin that renders at a size it chose itself is correct at exactly one of
+# those and wrong at every other, and NOTHING downstream notices: it publishes
+# clean, and a screenshot taken at the size you happened to test looks perfect.
+# Until these checks existed the only way to catch it was a human dragging the
+# harness frame and remembering to.
+
+# A CSS length in viewport units: a number followed by the unit. Matching the
+# bare letters would flag any identifier containing "vh".
+VIEWPORT_UNITS = re.compile(r"\b\d+(?:\.\d+)?(?:vh|vw|dvh|dvw|svh|svw|lvh|lvw)\b",
+                            re.I)
+FLEX_GROW = re.compile(r"flex\s*:\s*1\b|flexGrow\s*:\s*1\b|flex\s*:\s*'1\b")
+
+
+def check_viewport_units(rep, src):
+    """vh/vw size against the viewport, and the iframe is not the viewport.
+
+    It only coincides with the element box when the plugin happens to be the
+    whole screen. Everywhere else -- which is everywhere -- the plugin renders
+    at a size unrelated to the box it was given, and overflows or letterboxes.
+    """
+    hits = sorted(set(m.group(0) for m in VIEWPORT_UNITS.finditer(src)))
+    if not hits:
+        rep.ok("viewport-units", "no vh/vw -- sized from its own box")
+        return
+    rep.fail("viewport-units",
+             "uses viewport units (%s). The iframe is not the viewport, so "
+             "these are right at one size and wrong at every other. Size from "
+             "the parent box: 100%% down the chain, plus a ResizeObserver."
+             % ", ".join(hits[:4]))
+
+
+def check_root_height(rep, plugin_dir):
+    """A percentage height resolves to `auto` unless every ancestor declares one.
+
+    Miss any link in html -> body -> #root and the plugin collapses to its
+    content height: a short strip of chart at the top of a tall empty element.
+    """
+    html_file = plugin_dir / "index.html"
+    if not html_file.is_file():
+        rep.skip("root-height", "no index.html")
+        return
+    html = html_file.read_text(encoding="utf-8", errors="replace")
+    # One rule may cover all three selectors, or each may be styled separately.
+    missing = []
+    for sel in ("html", "body", "#root"):
+        pat = re.compile(r"(^|[,{\s])%s\s*[,{][^}]*height\s*:\s*100%%" % re.escape(sel),
+                         re.I | re.M | re.S)
+        if not pat.search(html):
+            missing.append(sel)
+    if missing:
+        rep.fail("root-height",
+                 "index.html does not give %s a height -- a percentage height "
+                 "below an auto-height ancestor resolves to auto, and the "
+                 "plugin collapses to its content instead of filling the frame"
+                 % ", ".join(missing))
+    else:
+        rep.ok("root-height", "html, body, #root all declare height")
+
+
+def _enclosing_object(src, pos):
+    """The `{...}` literal containing pos, for inspecting one style object."""
+    depth = 0
+    start = None
+    for i in range(pos, -1, -1):
+        if src[i] == "}":
+            depth += 1
+        elif src[i] == "{":
+            if depth == 0:
+                start = i
+                break
+            depth -= 1
+    if start is None:
+        return ""
+    depth = 0
+    for j in range(start, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:j + 1]
+    return src[start:]
+
+
+def check_flex_min_height(rep, src):
+    """A flex child will not shrink below its content without min-height: 0.
+
+    The default `min-height: auto` means a growing child refuses to get
+    smaller than what is inside it, so instead of the content scrolling the
+    whole plugin pushes past the bottom of the iframe. Warn, not fail: the
+    check reads inline style objects, and a plugin styled from a .css file or
+    a CSS-in-JS library is invisible to it.
+    """
+    if not FLEX_GROW.search(src):
+        rep.skip("flex-min-height", "no growing flex child")
+        return
+    bad = 0
+    total = 0
+    for m in FLEX_GROW.finditer(src):
+        obj = _enclosing_object(src, m.start())
+        if not obj:
+            continue
+        total += 1
+        # Only matters for a child that has to contain something scrollable or
+        # stack further -- otherwise there is nothing to overflow.
+        risky = re.search(r"overflow|flexDirection|display\s*:\s*'flex'", obj)
+        if risky and not re.search(r"minHeight|min-height", obj):
+            bad += 1
+    if bad:
+        rep.warn("flex-min-height",
+                 "%d of %d growing flex child(ren) set no minHeight -- without "
+                 "it the child cannot shrink below its content and the plugin "
+                 "overflows the iframe instead of scrolling inside it"
+                 % (bad, total))
+    else:
+        rep.ok("flex-min-height", "%d growing flex child(ren), all guarded" % total)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Static preflight for a Sigma plugin. Catches the silent "
@@ -328,6 +449,9 @@ def main():
     check_bindings_resolve(rep, cols, args.data)
     check_vite_base(rep, plugin_dir)
     check_fallback_visible(rep, src)
+    check_root_height(rep, plugin_dir)
+    check_viewport_units(rep, src)
+    check_flex_min_height(rep, src)
 
     print()
     if rep.failed:

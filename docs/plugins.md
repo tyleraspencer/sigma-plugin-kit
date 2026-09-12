@@ -401,6 +401,42 @@ registered in your org — use `register-plugin.sh get "$PID"` for that.
 **If the plugin shows its demo data in Sigma, the binding is wrong.** That
 fallback is precisely what renders when nothing resolves.
 
+### The two gates
+
+`pipeline.sh` runs both. Reach for them by hand while iterating.
+
+```bash
+python3 scripts/preflight-plugin.py <name> [--data FILE]      # static, blocking
+python3 scripts/verify-plugin-binding.py <name> [--data FILE] # renders it twice
+```
+
+**`preflight-plugin.py` is what stops a bad deploy.** Every check in it is a
+mode where the plugin deploys clean, publishes clean, renders its own fallback
+and screenshots perfectly — no status code catches any of them. It imports
+`build-plugin-workbook.py`'s *own* panel parser rather than re-implementing
+one, so authoring and building cannot silently disagree about the binding
+contract. With `--data` it also checks that every `column` binding name has a
+matching header, which is what makes all the bindings resolve instead of just
+the first two.
+
+**`verify-plugin-binding.py` is the only thing that proves the plugin renders
+bound data.** It generates a local page that runs the plugin twice in isolated
+iframes — once with nothing bound, once with real rows in Sigma's column-keyed
+parallel-array shape — and fails if the two renders are identical, because that
+means the plugin is ignoring its bindings. No Sigma login, no deploy, no
+network. It reports which declared bindings the plugin actually *read*, via a
+Proxy on the config object, and it **resizes the bound frame and measures
+whether the plugin's root follows** — a root pinned to a fixed height reads the
+same at both sizes and fails `fills-frame`.
+
+The verdict lands in the page, in `document.title` (`HARNESS PASS` /
+`HARNESS FAIL`) and in `window.__HARNESS__`. Wait for the title to stop saying
+`HARNESS RUNNING`: read it early and the checks that had not finished yet look
+like failures.
+
+Escape hatches, for when a check is wrong rather than the plugin:
+`SIGMA_SKIP_PREFLIGHT=1`, `SIGMA_SKIP_BINDTEST=1`.
+
 ## Gotchas that cost a rebuild
 
 - **`url` is immutable on PATCH.** Deploy and verify, then register.
