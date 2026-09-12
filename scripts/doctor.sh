@@ -123,6 +123,63 @@ if [ -n "${SIGMA_BASE_URL:-}" ]; then
   unset _doctor_egress _doctor_egress_rc _doctor_status
 fi
 
+# --- Plugin host repo ------------------------------------------------------
+# The first-run wall. Plugins are served to Sigma from a PUBLIC repo's GitHub
+# Pages, and deploy-plugin.sh defaults to the author's. Anyone else gets all
+# the way through scaffold, preflight, npm install and a Vite build before
+# `git push` is rejected -- several minutes in, for a problem that takes ten
+# seconds to see here.
+#
+# The nastier variant is the split one: SIGMA_PLUGIN_HOST_REPO and
+# SIGMA_PLUGIN_HOST_URL are independent variables that must name the SAME
+# repo. Set one and forget the other and deploy pushes to your repo, then
+# polls somebody else's Pages URL -- which answers 200, with their plugin.
+# A green check on the wrong thing, which is this kit's signature failure.
+echo ""
+echo "== Plugin host repo =="
+HOST_REPO="${SIGMA_PLUGIN_HOST_REPO:-tyleraspencer/sigma-plugins}"
+HOST_URL="${SIGMA_PLUGIN_HOST_URL:-https://tyleraspencer.github.io/sigma-plugins}"
+host_owner="${HOST_REPO%%/*}"
+host_name="${HOST_REPO##*/}"
+expected_url="https://$(printf '%s' "$host_owner" | tr '[:upper:]' '[:lower:]').github.io/$host_name"
+
+echo "  repo: $HOST_REPO"
+echo "  url:  $HOST_URL"
+
+if [ "$HOST_URL" != "$expected_url" ]; then
+  bad "SIGMA_PLUGIN_HOST_URL does not match SIGMA_PLUGIN_HOST_REPO. For $HOST_REPO the Pages URL is $expected_url. Mismatched, a deploy pushes to one repo and then verifies another -- which can report success while serving someone else's plugin. (A custom domain is the one legitimate reason to differ; if that's you, ignore this.)"
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  warn "gh not installed -- cannot check that $HOST_REPO exists, is public, is writable by you, or has Pages enabled. Those are exactly the first-run failures; see README.md -> 'First run'."
+elif ! gh auth status >/dev/null 2>&1; then
+  warn "gh is installed but not signed in ('gh auth login') -- skipping the host-repo checks. See README.md -> 'First run'."
+else
+  _doctor_repo=$(gh repo view "$HOST_REPO" --json visibility,viewerPermission 2>/dev/null || echo "")
+  if [ -z "$_doctor_repo" ]; then
+    bad "$HOST_REPO does not exist or you cannot see it. Create your own public host repo and export SIGMA_PLUGIN_HOST_REPO/SIGMA_PLUGIN_HOST_URL -- README.md -> 'First run'."
+  else
+    _doctor_vis=$(printf '%s' "$_doctor_repo" | tr -d ' "' | sed -n 's/.*visibility:\([A-Za-z]*\).*/\1/p')
+    _doctor_perm=$(printf '%s' "$_doctor_repo" | tr -d ' "' | sed -n 's/.*viewerPermission:\([A-Za-z]*\).*/\1/p')
+    if [ "$_doctor_vis" = "PRIVATE" ]; then
+      bad "$HOST_REPO is PRIVATE. Sigma fetches a plugin's URL anonymously into an iframe, so a private repo's Pages output will not serve. Make it public, or point at one that is."
+    else
+      ok "$HOST_REPO is public"
+    fi
+    case "$_doctor_perm" in
+      ADMIN|MAINTAIN|WRITE) ok "you can push to $HOST_REPO ($_doctor_perm)" ;;
+      "") warn "could not read your permission on $HOST_REPO" ;;
+      *) bad "you have $_doctor_perm on $HOST_REPO, so the deploy push will be rejected. Use your own host repo: README.md -> 'First run'." ;;
+    esac
+    if gh api "repos/$HOST_REPO/pages" >/dev/null 2>&1; then
+      ok "GitHub Pages is enabled on $HOST_REPO"
+    else
+      bad "GitHub Pages is not enabled on $HOST_REPO (or you cannot read its Pages config). Without it the deployed plugin URL 404s forever. Enable it on main / root -- README.md -> 'First run'."
+    fi
+  fi
+  unset _doctor_repo _doctor_vis _doctor_perm
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo ""
   echo "All required checks passed. Try: bash \"$script_dir/api/whoami.sh\""

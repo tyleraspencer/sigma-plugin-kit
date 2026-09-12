@@ -37,6 +37,9 @@ workbooks/
 # compares them. Only the template new-plugin.sh copies from is tracked.
 plugins/*/
 !plugins/_react-template/
+# Archetype App.jsx files new-plugin.sh --from copies over src/App.jsx. Tracked
+# for the same reason the template is: they are kit content, not working files.
+!plugins/_archetypes/
 
 # Build artefacts inside a React-archetype plugin. The template itself is
 # tracked; nobody's node_modules or dist is.

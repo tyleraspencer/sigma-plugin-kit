@@ -212,7 +212,16 @@ PAGE = r"""<!doctype html>
                 : 'bound and unbound renders are IDENTICAL -- the plugin is '
                   + 'ignoring its bindings and showing fallback data');
 
-    var hits = P.labels.filter(function(l){ return l && b.indexOf(l) !== -1; });
+    // Case-insensitive, because the text being searched is innerText -- which
+    // returns the RENDERED text, so a plugin styling its labels with
+    // `text-transform: uppercase` yields "AUDIO" for a row whose value is
+    // "Audio". Comparing case-sensitively failed a plugin that was drawing
+    // every bound label correctly and visibly, which is the worst thing a
+    // gate can do: a false FAIL teaches you to stop believing it.
+    var bLower = b.toLowerCase();
+    var hits = P.labels.filter(function(l){
+      return l && bLower.indexOf(String(l).toLowerCase()) !== -1;
+    });
     var enough = hits.length >= Math.min(2, P.labels.length);
     add('bound-values-visible', enough,
         enough ? hits.length + '/' + P.labels.length + ' bound label(s) appear in B'

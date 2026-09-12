@@ -24,6 +24,19 @@
 #   SIGMA_PLUGIN_HOST_URL    default https://tyleraspencer.github.io/sigma-plugins
 #   SIGMA_PLUGIN_HOST_CLONE  local clone path (default: a cache under ~/.cache)
 #
+# A DEPLOY THAT WOULD CHANGE NOTHING COSTS ONE HTTP REQUEST. Before building,
+# this hashes the plugin's sources against the hash recorded by the last
+# successful deploy; if they match and the live URL still serves exactly those
+# bytes, it prints the URL and stops -- no npm, no clone, no push, no poll.
+# That matters because `pipeline.sh --redeploy` is now the normal way to ship
+# an edit, and re-running it after no edit at all used to cost a full build.
+#
+# Other env knobs:
+#   SIGMA_PREFLIGHT_DONE=1   caller already ran the full preflight (pipeline.sh
+#                            sets this). Skips the duplicate run below.
+#   SIGMA_FORCE_DEPLOY=1     ignore the unchanged-source short circuit.
+#   SIGMA_SKIP_DEP_CACHE=1   do not share node_modules between plugins.
+#
 # Deploy BEFORE registering. Sigma's PATCH cannot change a plugin's url, so a
 # URL that turns out not to serve costs you a delete + re-create and a new
 # pluginId. This script polls the live URL and fails unless it comes back
@@ -46,6 +59,75 @@ src="$repo_root/plugins/$name"
                    ls "$repo_root/plugins" 2>/dev/null | sed 's/^/    /' >&2; exit 1; }
 
 command -v git >/dev/null 2>&1 || { echo "deploy-plugin: git is required." >&2; exit 1; }
+
+url="$HOST_URL/plugins/$name/index.html"
+
+# State shared with pipeline.sh: ids and hashes, never a credential.
+state_dir="${SIGMA_PLUGIN_KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sigma-plugin-kit}/deploys"
+host_slug="$(printf '%s' "$HOST_REPO" | sed 's#[^a-zA-Z0-9]#-#g')"
+stamp_file="$state_dir/${host_slug}__${name}.srchash"
+
+# Hash of everything that can change the built bundle. dist/ and node_modules
+# are excluded deliberately -- they are outputs, and node_modules is shared by
+# hard link with other plugins.
+plugin_source_hash() {
+  "${SIGMA_PYTHON:-python3}" - "$1" <<'PY' 2>/dev/null
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+h = hashlib.sha256()
+paths = []
+for p in sorted(root.rglob("*")):
+    rel = p.relative_to(root)
+    parts = rel.parts
+    if parts and parts[0] in ("node_modules", "dist", ".git"):
+        continue
+    if p.is_file():
+        paths.append((str(rel).replace("\\", "/"), p))
+for rel, p in paths:
+    h.update(rel.encode())
+    h.update(b"\0")
+    h.update(p.read_bytes())
+    h.update(b"\0")
+print(h.hexdigest()[:16])
+PY
+}
+
+# assets_match <dist-dir> <base-url>; 0 when every asset index.html names is
+# served AND matches the local build byte for byte.
+#
+# Both the short circuit and the post-push poll need this, and they must not
+# disagree about what "deployed" means -- so it exists once. Matching
+# index.html is NOT sufficient on its own: asset names are deliberately stable
+# (see vite.config.js), so index.html is byte-identical across builds and would
+# pass instantly while Pages still served the previous bundle.
+assets_match() {
+  local dist="$1" base="$2" ref got acode clen missing=""
+  for ref in $(grep -o 'assets/[^"]*' "$dist/index.html" | sort -u); do
+    # Cheap prefilter: a length mismatch is a definite miss, and skipping the
+    # body saves re-downloading a multi-megabyte bundle on every attempt.
+    clen=$(curl -sSLI --connect-timeout 5 --max-time 15 "$base/$ref" 2>/dev/null \
+             | tr -d '\r' | awk 'tolower($1)=="content-length:"{v=$2} END{print v+0}')
+    if [ "${clen:-0}" -gt 0 ] && [ -f "$dist/$ref" ]; then
+      local local_len
+      local_len=$(wc -c < "$dist/$ref" | tr -d ' ')
+      if [ "$clen" != "$local_len" ]; then
+        missing="$missing $ref(len $clen!=$local_len)"
+        continue
+      fi
+    fi
+    got="$(mktemp "${TMPDIR:-/tmp}/asset.XXXXXX")"
+    acode=$(curl -sSL --connect-timeout 5 --max-time 30 -o "$got" \
+              -w '%{http_code}' "$base/$ref" 2>/dev/null || echo 000)
+    if [ "$acode" != "200" ]; then
+      missing="$missing $ref($acode)"
+    elif ! cmp -s "$got" "$dist/$ref"; then
+      missing="$missing $ref(stale)"
+    fi
+    rm -f "$got"
+  done
+  ASSETS_MISSING="$missing"
+  [ -z "$missing" ]
+}
 
 # --- Build -----------------------------------------------------------------
 if [ ! -f "$src/package.json" ]; then
@@ -85,17 +167,56 @@ fi
 # stop agreeing. pipeline.sh runs the full preflight, but deploy-plugin.sh is
 # callable on its own -- which is exactly how a broken plugin shipped once.
 preflight_py="$repo_root/scripts/preflight-plugin.py"
-if [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
+if [ -n "${SIGMA_PREFLIGHT_DONE:-}" ]; then
+  # pipeline.sh already ran the full preflight, with --data, a few seconds ago.
+  # Running it again would re-check the same bytes and print the same report
+  # into the caller's output a second time.
+  echo "  preflight: already run by the caller" >&2
+elif [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
   if ! "${SIGMA_PYTHON:-python3}" "$preflight_py" "$name" >&2; then
     echo "deploy-plugin: refusing to publish plugins/$name -- preflight failed." >&2
     exit 1
   fi
 fi
 
-if [ ! -d "$src/node_modules" ]; then
-  echo "Installing dependencies for $name ..." >&2
-  ( cd "$src" && { [ -f package-lock.json ] && npm ci --silent || npm install --silent; } ) >&2
+# --- Nothing changed? Then nothing to do. ---------------------------------
+# Checked after the static gates (so a broken plugin still gets caught) and
+# before npm, the clone and the push (which are the expensive parts).
+src_hash="$(plugin_source_hash "$src")"
+if [ -z "${SIGMA_FORCE_DEPLOY:-}" ] && [ -n "$src_hash" ] \
+   && [ -f "$stamp_file" ] && [ "$(cat "$stamp_file" 2>/dev/null)" = "$src_hash" ] \
+   && [ -f "$src/dist/index.html" ]; then
+  served="$(mktemp "${TMPDIR:-/tmp}/served.XXXXXX")"
+  if curl -sSL --connect-timeout 5 --max-time 20 -o "$served" "$url" 2>/dev/null \
+     && cmp -s "$served" "$src/dist/index.html" \
+     && assets_match "$src/dist" "$HOST_URL/plugins/$name"; then
+    rm -f "$served"
+    echo "Unchanged since the last deploy, and $url still serves it." >&2
+    echo "  Skipped build, clone and push. Force with SIGMA_FORCE_DEPLOY=1." >&2
+    printf '%s\n' "$url"
+    exit 0
+  fi
+  rm -f "$served"
 fi
+
+# shellcheck source=scripts/_deps-cache.sh
+. "$repo_root/scripts/_deps-cache.sh"
+dep_key="$(deps_cache_key "$src" || true)"
+
+if [ ! -d "$src/node_modules" ]; then
+  if [ -n "$dep_key" ] && deps_cache_link "$dep_key" "$src/node_modules"; then
+    echo "Linked dependencies for $name from the shared store." >&2
+  else
+    echo "Installing dependencies for $name ..." >&2
+    ( cd "$src" && { [ -f package-lock.json ] && npm ci --silent || npm install --silent; } ) >&2
+  fi
+fi
+# Populate the store from the first plugin that installs this dependency set,
+# so the next scaffold with the same deps links instead of installing.
+if [ -n "$dep_key" ] && [ -d "$src/node_modules" ]; then
+  deps_cache_save "$dep_key" "$src/node_modules" || true
+fi
+
 echo "Building $name ..." >&2
 ( cd "$src" && npm run build --silent ) >&2
 
@@ -172,6 +293,7 @@ mkdir -p "$dest"
 ( cd "$publish_dir" && tar cf - . ) | ( cd "$dest" && tar xf - )
 
 git -C "$CLONE_DIR" add -A "plugins/$name"
+pushed=0
 if git -C "$CLONE_DIR" diff --cached --quiet; then
   echo "No change to plugins/$name -- already deployed." >&2
 else
@@ -180,9 +302,32 @@ else
     -m "Deploy plugin $name ($archetype, sigma-plugin-kit $sha)"
   echo "Pushing to $HOST_REPO ..." >&2
   git -C "$CLONE_DIR" push -q origin main
+  pushed=1
 fi
 
-url="$HOST_URL/plugins/$name/index.html"
+# --- Let Pages finish building before byte-checking it --------------------
+# Without this the loop below spends its first several attempts downloading a
+# bundle that provably cannot be there yet, because Pages has not built the
+# commit we just pushed. Asking Pages directly turns those wasted round trips
+# into one cheap status poll. Best-effort: needs gh, and a repo whose Pages
+# build history is readable. Never fatal -- the byte check below is the real
+# gate, this only stops us knocking early.
+if [ "$pushed" -eq 1 ] && command -v gh >/dev/null 2>&1; then
+  echo "Waiting for the Pages build ..." >&2
+  pages_wait=0
+  while [ "$pages_wait" -lt 20 ]; do
+    pstatus=$(gh api "repos/$HOST_REPO/pages/builds/latest" --jq .status 2>/dev/null || echo "")
+    case "$pstatus" in
+      built) echo "  Pages build: built" >&2; break ;;
+      errored)
+        echo "  Pages build reported 'errored' -- checking what is served anyway." >&2
+        break ;;
+      "")  # no gh auth, no Pages API, or a repo we cannot read: stop asking
+        break ;;
+      *) pages_wait=$((pages_wait + 1)); sleep 3 ;;
+    esac
+  done
+fi
 
 # --- Wait for Pages to serve exactly what we pushed -----------------------
 # A fresh Pages build routinely takes 30-60s and a brand-new path 404s until
@@ -211,35 +356,23 @@ while [ "$attempt" -lt "$max_attempts" ]; do
           # forever, and no error anywhere. Seen for real when a browser held a
           # cached index.html naming a hashed bundle that the next deploy had
           # already deleted -- hence stable asset names in vite.config.js, and
-          # hence this check.
-          # Byte-compare the assets too, not just their status. Asset names are
-          # deliberately stable (see vite.config.js), which makes the
-          # index.html comparison above pass INSTANTLY on every deploy --
-          # index.html no longer changes. Without this the whole wait would be
-          # theatre: it would report success while Pages still served the
-          # previous bundle.
-          missing=""
-          for ref in $(grep -o 'assets/[^"]*' "$publish_dir/index.html" | sort -u); do
-            got="$(mktemp "${TMPDIR:-/tmp}/asset.XXXXXX")"
-            acode=$(curl -sSL --connect-timeout 5 --max-time 30 -o "$got" \
-                      -w '%{http_code}' "$HOST_URL/plugins/$name/$ref" 2>/dev/null || echo 000)
-            if [ "$acode" != "200" ]; then
-              missing="$missing $ref($acode)"
-            elif ! cmp -s "$got" "$publish_dir/$ref"; then
-              missing="$missing $ref(stale)"
-            fi
-            rm -f "$got"
-          done
-          if [ -n "$missing" ]; then
+          # hence assets_match, which the unchanged-source short circuit above
+          # uses too so the two can never disagree about "deployed".
+          if ! assets_match "$publish_dir" "$HOST_URL/plugins/$name"; then
             if [ "$attempt" -lt "$max_attempts" ]; then
-              echo "  index.html serves, its asset(s) do not yet:$missing (attempt ${attempt})" >&2
+              echo "  index.html serves, its asset(s) do not yet:$ASSETS_MISSING (attempt ${attempt})" >&2
               sleep 6
               continue
             fi
-            echo "deploy-plugin: index.html serves but these assets do not:$missing" >&2
+            echo "deploy-plugin: index.html serves but these assets do not:$ASSETS_MISSING" >&2
             exit 1
           fi
           echo "  serving after ${attempt} check(s): 200 $ctype, index + assets verified" >&2
+          # Record what was deployed, so an immediate re-run costs one request.
+          if [ -n "$src_hash" ]; then
+            mkdir -p "$state_dir" 2>/dev/null || true
+            printf '%s\n' "$src_hash" > "$stamp_file" 2>/dev/null || true
+          fi
           printf '%s\n' "$url"
           exit 0
         fi

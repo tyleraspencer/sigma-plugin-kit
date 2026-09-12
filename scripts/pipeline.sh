@@ -207,8 +207,11 @@ else
 fi
 
 # --- 4. deploy ------------------------------------------------------------
+# SIGMA_PREFLIGHT_DONE: deploy-plugin.sh runs its own preflight, because it is
+# callable on its own and that is exactly how a broken plugin shipped once.
+# Step 2 just ran the full one, with --data, so tell it not to repeat itself.
 say "4/$total deploy"
-url="$(bash scripts/deploy-plugin.sh "$name")"
+url="$(SIGMA_PREFLIGHT_DONE=1 bash scripts/deploy-plugin.sh "$name")"
 echo "  $url" >&2
 
 # --- 5. register (reuse if present) ---------------------------------------

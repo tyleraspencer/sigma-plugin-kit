@@ -20,55 +20,57 @@ come back for a second. Questions 1 and 2 have fixed shapes; the rest are
 yours to pick.
 
 **1. Environment — always ask, and ask it first.** Registration writes a
-`pluginId` into whatever org the token belongs to, and the org is settled
-before any other answer matters.
+`pluginId` into whatever org the token belongs to, and `PATCH /v2/plugins/{id}`
+cannot move it afterwards.
 
-| Option | What it means |
-| --- | --- |
-| `app.sigmacomputing.com/papercrane` *(recommend this first)* | The default org. `SIGMA_BASE_URL=https://api.sigmacomputing.com`. Known-good connections, the existing plugin registry, a personal destination folder. |
-| Somewhere else | Ask for the org's app URL, then set `SIGMA_BASE_URL` to that org's **region host** — it is not derivable from the app URL, so look it up in `docs/auth.md` → "Egress allowlist" (`aws-api`, `api.eu.aws`, `api.us.azure`, …). Re-auth against that host before building. |
+- **`app.sigmacomputing.com/papercrane`** *(recommend first)* — the default
+  org. `SIGMA_BASE_URL=https://api.sigmacomputing.com`.
+- **Somewhere else** — ask for the org's app URL, then set `SIGMA_BASE_URL` to
+  that org's **region host**, which is not derivable from it. Look it up in
+  `docs/auth.md` → "Egress allowlist", and re-auth against that host.
 
-Then **confirm the session is actually pointed there** before `pipeline.sh`
-runs — `bash scripts/api/whoami.sh` prints the host and the signed-in user. A
-token left over from another org will register the plugin in the wrong place
-without complaining, and `PATCH /v2/plugins/{id}` can't move it.
+Then confirm the session really is pointed there before `pipeline.sh` runs:
+`bash scripts/api/whoami.sh` prints the host and the signed-in user. A token
+left over from another org registers the plugin in the wrong place without
+complaining.
 
 **2. Data — always ask.** The other fixed shape:
 
-| Option | What it means |
-| --- | --- |
-| Synthetic data *(recommend this first)* | You invent rows that fit the topic and they're compiled into the workbook as a `kind:"sql"` VALUES literal. Self-contained, no warehouse access, works in any org. Pass them as `--data <file.csv\|json>`. |
-| Sigma Sample Database — `RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB` | The known-good real table. Bind it with `--path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA` — **the actual table name carries a `_DATA` suffix**; the short name won't resolve. Columns include `STORE_REGION`, `STORE_STATE`, `PRODUCT_FAMILY`, `BRAND`, `QUANTITY`, `PRICE`, `COST`, `DATE`, and it's geocoded (`STORE_ZIP_CODE`, `STORE_LATITUDE`, `STORE_LONGITUDE`), which makes it the go-to for anything map-shaped. Only exists in orgs that have the sample connection — if question 1 picked somewhere else, check before offering it. |
-| Something else — please specify | Any other warehouse table: `--path DB SCHEMA TABLE` with `--dimension`/`--measure` (or `--bind` for more than two columns). Ask which one, or offer to find it — then actually find it with `list-connections.sh` / `mcp-search.sh` / `mcp-describe.sh` rather than guessing names. |
+- **Synthetic rows** *(recommend first)* — you invent rows that fit the topic
+  and they compile into the workbook as a `kind:"sql"` VALUES literal. No
+  warehouse access, works in any org. Pass `--data <file.csv|json>`.
+- **Sigma Sample Database** — the known-good real table. `--path RETAIL
+  PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`, and **the `_DATA`
+  suffix is part of the name** — the short one won't resolve. Geocoded, so
+  it's what anything map-shaped should bind. Column list and the
+  which-orgs-have-it caveat: `docs/plugins.md` → "The known-good real table".
+- **Something else** — any other warehouse table: `--path DB SCHEMA TABLE`
+  with `--dimension`/`--measure`, or `--bind` past two columns. Find it with
+  `list-connections.sh` / `mcp-search.sh` / `mcp-describe.sh`; don't guess
+  names.
 
-If they pick a real table and can't name one, don't stall: search, propose the
-best match by name, and say you'll fall back to synthetic rows if it's wrong.
+If they want a real table and can't name one, don't stall: search, propose the
+best match, and say you'll fall back to synthetic rows if it's wrong.
 
-**3. Look and feel — always ask.** Pick the axis that most changes the code
-*for this plugin*, not a generic "what style?". The useful ones:
+**3. Look and feel — always ask**, on whichever axis most changes the code
+*for this plugin*, not a generic "what style?":
 
-- **Density** — compact and data-dense, or large and presentation-ready? Drives
-  font sizes, padding, how many rows survive at a small size.
-- **Color** — one accent, a categorical palette, or a value-driven scale
-  (good/bad, low/high)? Drives the whole palette and any conditional formatting.
-- **Chart form**, when the request names a goal instead of a shape — "compare
-  regions" could be bars, a map, or a dot plot.
-- **Branding** — Sigma-native look, or the user's/a third party's colors and
-  logos?
+- **Chart form**, when the request names a goal rather than a shape —
+  "compare regions" could be bars, a map or a dot plot. This one also picks
+  the archetype.
+- **Color** — one accent, a categorical palette, or a value-driven scale.
+- **Density** — compact and data-dense, or large and presentation-ready.
+- **Branding** — Sigma-native, or someone's colors and logos.
 
-**4. Whatever else actually changes the build.** Ask only when the answer
-would send you down a different path. The usual candidates:
+**4. Whatever else actually changes the build**, and nothing that doesn't:
 
-- **Does clicking it do anything?** A plugin that filters the rest of the
-  dashboard needs a `variable` panel entry wired to a workbook control — that's
-  structural, not a later tweak. See "Before you write a panel" below.
+- **Does clicking it do anything?** Cross-filtering needs a `variable` panel
+  entry wired to a workbook control — structural, not a later tweak.
 - **What are the entities?** Brands, product families, store regions, funnel
-  stages, SKUs. Real names beat "Brand A" and you need them before you can
-  write the synthetic rows.
+  stages, SKUs. You need real names before you can write synthetic rows.
 - **Thresholds and rules** for anything computed — what counts as good, how a
   score is weighted, where a cutoff sits.
-- **Multiple elements?** A plugin can bind more than one; ask if the request
-  hints at combining two sources.
+- **Multiple elements?** A plugin can bind more than one.
 - **Where it lives** — an existing workbook, or a new one.
 
 ### Rules for the intake
@@ -99,26 +101,13 @@ bash scripts/pipeline.sh brand-bars "Brand Bars" -- \
   --dimension BRAND --measure "Sum(PRICE * QUANTITY)" --measure-name Revenue
 ```
 
-**A plugin needing more than a label and a value** -- a map wants zip, latitude,
-longitude *and* a measure -- names each column with `--bind KEY[:Display]=FORMULA`,
-keyed by its editor-panel binding. A bare column reference groups; an expression
-aggregates. `--dimension`/`--measure` stay as the two-column default.
-
-```bash
-bash scripts/pipeline.sh zip-map "ZIP Map" -- \
-  --path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA \
-  --bind zip:ZIP=STORE_ZIP_CODE \
-  --bind "value:Revenue=Sum(PRICE * QUANTITY)" \
-  --bind "latitude:Latitude=Max(STORE_LATITUDE)" \
-  --bind "longitude:Longitude=Max(STORE_LONGITUDE)" \
-  --variable-control selectedZips --control-values /tmp/zips.txt
-```
-
-`--variable-control` with `--path` additionally needs `--control-values FILE`
-(one per line): a control's `source` must be `manual`, and warehouse rows are
-not in the spec to read the distinct values out of. Get them with the Sigma
-MCP `query` tool -- `SELECT DISTINCT` against the connection, table referenced
-by its inodeId.
+**More than a label and a value** — a map wants zip, latitude, longitude *and*
+a measure — names each column with `--bind KEY[:Display]=FORMULA`, keyed by
+its editor-panel binding. A bare column reference groups, an expression
+aggregates, and `--dimension`/`--measure` stay the two-column default. A
+`--variable-control` on a warehouse source additionally needs
+`--control-values FILE`. Both, with worked examples: `docs/plugins.md` →
+"Binding more than two columns".
 
 Pass `--data` alongside `--path` when you have a sample of the real rows: the
 workbook still binds the warehouse table, but preflight checks the binding
@@ -149,8 +138,21 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
 
-`pipeline.sh` scaffolds a **Vite + React** project — the only archetype. npm
-packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
+**Start from the nearest shape.** `plugins/_archetypes/` holds finished
+`src/App.jsx` files — `table`, `kpi`, `funnel`, `donut` — that already satisfy
+every rule preflight enforces. Editing one beats writing 190 lines of React:
+
+```bash
+bash scripts/new-plugin.sh <name> "Title" --from kpi   # --from list to see them
+bash scripts/pipeline.sh <name> "Title"                # then the usual chain
+```
+
+They all bind `label` then `value`, so no extra flags are needed. Pick by
+shape, then edit — the palette, the fields, the labels are yours to change.
+Take the default bar chart when nothing is close.
+
+`pipeline.sh` scaffolds a **Vite + React** project — the only project shape.
+npm packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
 `deploy-plugin.sh` runs the build. There is no hand-written-HTML archetype;
 preflight, deploy and CI each refuse a non-React plugin. Why it was removed:
 `docs/plugins.md` → "Why there is no hand-written-HTML archetype".

@@ -315,6 +315,53 @@ pre-aggregated, one per category.
 
 With none of the three, the generator errors rather than inventing something.
 
+#### Binding more than two columns
+
+`--dimension`/`--measure` emit exactly two columns, which is not enough for a
+plugin whose panel declares more — a map wants zip, latitude, longitude *and*
+a measure. Name each one with `--bind KEY[:Display]=FORMULA`, keyed by its
+editor-panel binding name. A bare column reference goes to `groupBy`; an
+expression goes to `calculations`.
+
+```bash
+bash scripts/pipeline.sh zip-map "ZIP Map" -- \
+  --path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA \
+  --bind zip:ZIP=STORE_ZIP_CODE \
+  --bind "value:Revenue=Sum(PRICE * QUANTITY)" \
+  --bind "latitude:Latitude=Max(STORE_LATITUDE)" \
+  --bind "longitude:Longitude=Max(STORE_LONGITUDE)" \
+  --variable-control selectedZips --control-values /tmp/zips.txt
+```
+
+**`--variable-control` with `--path` also needs `--control-values FILE`** (one
+value per line). A control's `source` must be `manual`, and with a warehouse
+source there are no rows in the spec to read the distinct values out of. Get
+them with the Sigma MCP `query` tool — `SELECT DISTINCT` against the
+connection, table referenced by its inodeId.
+
+#### The known-good real table
+
+`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB` in the Sigma Sample
+Database. Bind it as:
+
+```bash
+--path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA
+```
+
+**The actual table name carries a `_DATA` suffix** — the short name resolves
+to nothing, with no error worth the name. Columns worth knowing:
+
+| | |
+| --- | --- |
+| Dimensions | `STORE_REGION`, `STORE_STATE`, `PRODUCT_FAMILY`, `BRAND`, `PRODUCT_NAME` |
+| Measures | `QUANTITY`, `PRICE`, `COST` |
+| Time | `DATE` |
+| Geo | `STORE_ZIP_CODE`, `STORE_LATITUDE`, `STORE_LONGITUDE` |
+
+It is geocoded, which makes it the one to reach for whenever the plugin is
+map-shaped. It only exists in orgs that have the sample connection — check
+with `list-connections.sh` before offering it anywhere but the default org.
+
 ### Generated rows, and why input tables still don't work
 
 Generated mode compiles your rows into a `SELECT ... FROM (VALUES ...)`

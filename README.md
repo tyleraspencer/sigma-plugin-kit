@@ -14,6 +14,43 @@ leaves open. It runs before anything is scaffolded, because deploy and register
 can't be undone. Question set:
 [SKILL.md](skills/sigma-plugin-pipeline/SKILL.md).
 
+## First run
+
+**If you are not this repo's author, do this once before anything else.**
+Sigma renders a plugin by fetching its URL anonymously into an iframe, so
+plugins are served from a **public** repo's GitHub Pages — and
+`deploy-plugin.sh` defaults to the author's. Without your own host repo you
+get all the way through scaffold, preflight, `npm install` and a Vite build
+before `git push` is rejected.
+
+```bash
+gh repo create <you>/sigma-plugins --public --add-readme        # 1. your host repo
+gh api -X POST repos/<you>/sigma-plugins/pages \
+  -f 'source[branch]=main' -f 'source[path]=/'                  # 2. enable Pages
+
+export SIGMA_PLUGIN_HOST_REPO=<you>/sigma-plugins               # 3. point the kit at it
+export SIGMA_PLUGIN_HOST_URL=https://<you>.github.io/sigma-plugins
+```
+
+Set **both** variables. They are independent, and they must name the same
+repo: set one and forget the other and a deploy pushes to your repo, then
+verifies someone else's Pages URL — which answers `200`, with their plugin.
+
+Then confirm it, rather than finding out mid-build:
+
+```bash
+bash scripts/doctor.sh     # checks the repo exists, is public, is writable, has Pages
+```
+
+`doctor.sh` fails loudly on each of those, and on the mismatched-variables
+case. Put the two `export`s in your shell profile so they survive the session.
+
+Nothing else needs setting up: `plugins/<name>/node_modules` is local,
+gitignored, and shared between plugins by hard link; the host repo only ever
+receives built output.
+
+## Then, every time
+
 ```bash
 bash scripts/doctor.sh                                  # check the host
 export SIGMA_BASE_URL=https://api.sigmacomputing.com
@@ -47,6 +84,20 @@ published. `--new-workbook` opts back into a fresh one. Faster still, while
 you're iterating on the look: `npm run dev` and point the element at
 `http://localhost:5173` — details in
 [docs/plugins.md](docs/plugins.md).
+
+**Start from the nearest shape, not from scratch.** `plugins/_archetypes/`
+holds finished `src/App.jsx` files — ranked table, KPI tiles, funnel, donut —
+each already satisfying everything preflight enforces:
+
+```bash
+bash scripts/new-plugin.sh my-viz "My Viz" --from list   # what's available
+bash scripts/new-plugin.sh my-viz "My Viz" --from kpi
+```
+
+They replace `src/App.jsx` only. `package.json`, `vite.config.js` and
+`index.html` stay the template's, so `base: './'` and the bundled-SDK rule
+live in one place and cannot drift. All of them bind `label` then `value`, so
+`pipeline.sh` works on any of them with no extra flags.
 
 Every plugin is a Vite + React project, so npm packages — Plotly, Mapbox, D3,
 Recharts — are available from the start and `deploy-plugin.sh` runs the build.
@@ -135,11 +186,13 @@ as a successful deploy. CI gates the templates themselves.
 
 ```
 plugins/
-  _react-template/            the only archetype: Vite + React, SDK bundled
+  _react-template/            the project shape: Vite + React, SDK bundled
+  _archetypes/<shape>.jsx     ready-made src/App.jsx -- new-plugin.sh --from
   <name>/                     gitignored working dirs -- see "Where plugins live"
 scripts/
   pipeline.sh                 all four steps in one command; start here
-  new-plugin.sh               1. scaffold plugins/<name>/
+  new-plugin.sh               1. scaffold plugins/<name>/ (--from <shape>)
+  _deps-cache.sh              sourced: node_modules shared between plugins
   deploy-plugin.sh            2. push to public Pages, poll until it serves
   build-plugin-workbook.py    4. generate the workbook spec
   validate-spec.py            8 pre-POST checks (publish-workbook.sh runs it)

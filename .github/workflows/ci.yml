@@ -189,20 +189,45 @@ jobs:
               bad(f'{root}/index.html: loads the SDK from a script tag. A bundled '
                   f'plugin must import the client from @sigmacomputing/plugin.')
 
-          app = (root / 'src' / 'App.jsx').read_text(encoding='utf-8')
-          if 'configureEditorPanel' not in app:
-              bad(f'{root}/src/App.jsx: never calls configureEditorPanel, so the plugin '
-                  f'would expose no bindings.')
-          if '__PLUGIN_TITLE__' not in app:
-              bad(f'{root}/src/App.jsx: missing the __PLUGIN_TITLE__ placeholder.')
-          if "from '@sigmacomputing/plugin'" not in app:
-              bad(f"{root}/src/App.jsx: never imports from '@sigmacomputing/plugin'.")
-          # An unguarded ResizeObserver whose callback re-renders into the
-          # observed element is an infinite loop that pins a CPU core silently.
-          if 'ResizeObserver' in app and not any(
-                  g in app for g in ('clientWidth', 'clientHeight', 'contentRect')):
-              bad(f'{root}/src/App.jsx: ResizeObserver with no size comparison.')
+          # The same rules apply to the template's App.jsx and to every
+          # archetype new-plugin.sh --from can drop in its place, so they are
+          # checked by one function rather than two drifting copies. An
+          # archetype that fails these ships a broken plugin to whoever picks
+          # it, and nothing downstream would catch it: preflight only ever sees
+          # an already-scaffolded plugin, never the archetype itself.
+          def check_app(path, app):
+              if 'configureEditorPanel' not in app:
+                  bad(f'{path}: never calls configureEditorPanel, so the plugin '
+                      f'would expose no bindings.')
+              if '__PLUGIN_TITLE__' not in app:
+                  bad(f'{path}: missing the __PLUGIN_TITLE__ placeholder.')
+              if "from '@sigmacomputing/plugin'" not in app:
+                  bad(f"{path}: never imports from '@sigmacomputing/plugin'.")
+              # A window global reads undefined in a bundled plugin and the
+              # plugin renders its fallback forever, looking fine in a
+              # screenshot.
+              for g in ('window.sigmaComputing', 'window.SigmaPlugin'):
+                  if g in app:
+                      bad(f'{path}: reaches for {g}; import the client instead.')
+              # An unguarded ResizeObserver whose callback re-renders into the
+              # observed element is an infinite loop that pins a CPU core silently.
+              if 'ResizeObserver' in app and not any(
+                      g in app for g in ('clientWidth', 'clientHeight', 'contentRect')):
+                  bad(f'{path}: ResizeObserver with no size comparison.')
+              # A fallback render nobody can identify is indistinguishable from
+              # a working one -- which is the failure this whole kit is built
+              # around.
+              if re.search(r'\bisDemo\b|\bfallback\b', app) and not re.search(
+                      r'badge|demo data', app, re.I):
+                  bad(f'{path}: renders fallback data with no visible badge.')
+
+          check_app(f'{root}/src/App.jsx', (root / 'src' / 'App.jsx').read_text(encoding='utf-8'))
           print(f'checked {root}')
+
+          archetypes = sorted(pathlib.Path('plugins/_archetypes').glob('*.jsx'))
+          for a in archetypes:
+              check_app(str(a), a.read_text(encoding='utf-8'))
+              print(f'checked {a}')
 
           sys.exit(fail)
           PY
