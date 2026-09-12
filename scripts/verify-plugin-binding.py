@@ -177,6 +177,19 @@ PAGE = r"""<!doctype html>
 
   // Settle on a stable render rather than a fixed sleep: a bundle parses,
   // mounts, subscribes and re-renders, and the last step is the one we need.
+  //
+  // Stability alone is NOT enough to call it finished. On a cold load the
+  // plugin mounts and paints its fallback in a few hundred ms, and that render
+  // then sits perfectly still while the subscription round-trip is still in
+  // flight -- so a "settled" check that only watches the text declares the
+  // plugin non-binding a beat before it binds. It reports three failures at
+  // once (data-subscribed, binds-vs-fallback, bound-values-visible) about a
+  // plugin that is about to be completely fine, and a reload "fixes" it, which
+  // is the worst shape a gate can have: intermittently, confidently wrong.
+  //
+  // So wait for the bound frame to have actually subscribed before trusting
+  // stability. A plugin that genuinely never subscribes still fails -- it just
+  // takes the hard cap to get there, and that verdict is the true one.
   var lastA = null, lastB = null, stable = 0;
   var ticks = 0;
   var timer = setInterval(function(){
@@ -184,7 +197,8 @@ PAGE = r"""<!doctype html>
     var a = textOf(frames[0]), b = textOf(frames[1]);
     if (a === lastA && b === lastB && (a || b)) stable++; else stable = 0;
     lastA = a; lastB = b;
-    if (stable >= 4 || ticks > 60) { clearInterval(timer); finish(a, b); }
+    var settled = stable >= 4 && frames[1].sawSub;
+    if (settled || ticks > 100) { clearInterval(timer); finish(a, b); }
   }, 120);
 
   function finish(a, b){
