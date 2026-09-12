@@ -162,6 +162,14 @@ If the plugin's `configureEditorPanel` entries use names other than
 pass `-- --label-key <name> --value-key <name>`. Binding the wrong key renders
 the fallback, silently.
 
+**Tell the user the workbook needs publishing.** The spec API writes the
+workbook's *draft*, and Sigma has no API to publish it — so a URL handed over
+straight from `pipeline.sh` shows everyone else the previous published
+version. When the run printed `NOT PUBLISHED YET`, say so when you deliver the
+link: *"open it and click Publish."* When it didn't — a `--redeploy`, or a
+spec that didn't change — nothing is pending and there is nothing to mention.
+→ `docs/plugins.md` → "A published workbook needs a human"
+
 Run the four steps by hand only when something fails. They're in
 `docs/plugins.md`, along with the SDK reference and every gotcha.
 

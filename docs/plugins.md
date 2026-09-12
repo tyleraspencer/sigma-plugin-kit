@@ -315,6 +315,37 @@ pre-aggregated, one per category.
 
 With none of the three, the generator errors rather than inventing something.
 
+#### A published workbook needs a human
+
+**The spec API writes the workbook's draft, not its published version.** POST
+and PUT both create a new version that the owner sees on opening — and that
+everyone else does not, until someone clicks **Publish** in the UI. Send the
+URL straight out of `pipeline.sh` and your audience gets the previous
+published version, or an empty workbook if there has never been one.
+
+There is no API for this. Verified against Sigma's own reference on
+2026-09-12: `PUT /v2/workbooks/{workbookId}/spec` accepts `document` and an
+optional `documentVersion` and nothing else; `POST /v2/workbooks/spec` accepts
+`name`, `folderId`, `document`, `description`. Neither has a publish
+parameter. There is no `/publish` route on `/v2/workbooks`, `/v2/files` or
+`/v2/documents` — all 404 to both GET and POST — no `/versions` route, and
+`/tags` is GET-only. `?version=published` and `?version=draft` are accepted
+and ignored on `/spec` and `/elements`: every read returns current state, so
+the API cannot even *report* whether a draft is pending.
+
+So `pipeline.sh` prints a NOT PUBLISHED YET warning whenever it wrote a
+workbook, and stays quiet when it didn't. Two cases genuinely need nothing:
+
+- **`--redeploy`** — the spec is untouched, so no draft is created, and the
+  iframe fetches the new bundle on its next load. A bundle-only change reaches
+  viewers with nobody opening Sigma.
+- **an unchanged spec** — nothing was published, so nothing is pending.
+
+`documentVersion` on the PUT is worth knowing about for a different reason:
+"update only if the workbook is still at this document version". The kit does
+not send it, so a PUT will overwrite edits someone made in the UI since the
+last run.
+
 #### Binding more than two columns
 
 `--dimension`/`--measure` emit exactly two columns, which is not enough for a
