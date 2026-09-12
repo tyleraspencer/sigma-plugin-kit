@@ -17,7 +17,9 @@ Data comes from one of three places, in priority order:
                  pipeline.sh passes this automatically.
 
   --path         A real warehouse table instead, grouped by --dimension with
-                 --measure aggregated over it.
+                 --measure aggregated over it -- or, for a plugin that needs
+                 more than a label and a value, one --bind per editor-panel
+                 binding.
 
 There is no built-in row set on purpose. A generic default ("Alice Johnson",
 "SCORE") is the thing everyone falls into and nobody notices is meaningless.
@@ -33,8 +35,9 @@ rows the plugin should draw, one per category.
 --variable-control additionally emits a list control and binds it to one of the
 plugin's `variable` editor-panel entries, which is the only channel a plugin
 has for writing a selection back into a workbook. The control's choices come
-from a data column, so the values the plugin writes are always values the
-control accepts.
+from a data column -- or from --control-values with --path, where the rows are
+in the warehouse rather than the spec -- so the values the plugin writes are
+always values the control accepts.
 
 The SQL is Snowflake-flavoured (`::varchar`, `::number`, `::timestamp_ntz`).
 Another connection type needs the casts adjusted.
@@ -209,6 +212,11 @@ def infer_type(values):
         return "date"
     if all(_DATETIME.match(s) for s in strs):
         return "datetime"
+    # A zero-padded numeric string is an identifier, not a number. ZIP codes
+    # are the canonical case: inferring "01101" as an int publishes 1101, and
+    # every downstream join, control value and label is silently wrong.
+    if any(len(v) > 1 and v[0] == "0" and v[1] != "." for v in strs):
+        return "text"
     try:
         nums = [float(s) for s in strs]
     except ValueError:
@@ -295,29 +303,77 @@ def load_rows(path):
 
 # --- warehouse mode -------------------------------------------------------
 
+_BARE_ONLY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def parse_bind(spec):
+    """`KEY[:Display]=FORMULA` -> (key, display name, formula)."""
+    key_part, sep, formula = spec.partition("=")
+    if not sep or not key_part.strip() or not formula.strip():
+        raise SystemExit("build-plugin-workbook: --bind wants KEY[:Display]=FORMULA, "
+                         "got %r" % spec)
+    key, _, display = key_part.partition(":")
+    key = key.strip()
+    display = display.strip() or re.sub(r"(?<!^)(?=[A-Z])", " ",
+                                        key.replace("_", " ")).strip().title()
+    return key, display, formula.strip()
+
+
 def build_warehouse(args):
+    """-> (table element, {binding key: column id}, [binding keys, in order]).
+
+    Two columns -- --dimension and --measure -- is the historical shape and
+    still the default. A plugin that needs more than a label and a value (a
+    map wants zip, latitude, longitude AND a measure) names each one with
+    --bind, keyed by its editor-panel binding:
+
+        --bind zip=STORE_ZIP_CODE --bind "latitude=Max(STORE_LATITUDE)"
+
+    A bare column reference becomes a groupBy dimension; anything else is an
+    expression and becomes a calculation. That split is not cosmetic: once a
+    table has groupings, every column must be one or the other, and an orphan
+    renders a nonsensical summary row.
+    """
     table_name = args.path[-1]
-    dim_name = args.dimension.replace("_", " ").title()
-    dim_id, mea_id = column_id(args.dimension), column_id(args.measure_name)
+
+    if args.bind:
+        binds = [parse_bind(b) for b in args.bind]
+    else:
+        binds = [("label", args.dimension.replace("_", " ").title(), args.dimension),
+                 ("value", args.measure_name, args.measure)]
+
+    columns, group_by, calcs, config, order, seen = [], [], [], {}, [], set()
+    for key, display, formula in binds:
+        cid = column_id(key)
+        if cid in seen:
+            raise SystemExit("build-plugin-workbook: two --bind keys collapse to the "
+                             "same column id (%s) -- rename one." % cid)
+        seen.add(cid)
+        columns.append({"id": cid, "name": display,
+                        "formula": qualify(formula, table_name)})
+        (group_by if _BARE_ONLY.match(formula) else calcs).append(cid)
+        config[key] = cid
+        order.append(key)
+
+    first_calc = next((c["name"] for c in columns if c["id"] in calcs), None)
+    first_dim = next((c["name"] for c in columns if c["id"] in group_by), None)
     element = {
         "id": "tbl-data", "kind": "table",
-        "name": "%s by %s" % (args.measure_name, dim_name),
+        "name": ("%s by %s" % (first_calc, first_dim)) if first_calc and first_dim
+                else table_name.replace("_", " ").title(),
         "source": {"kind": "warehouse-table", "connectionId": args.connection_id,
                    "path": list(args.path)},
-        "columns": [
-            {"id": dim_id, "name": dim_name,
-             "formula": "[%s/%s]" % (table_name, args.dimension)},
-            {"id": mea_id, "name": args.measure_name,
-             "formula": qualify(args.measure, table_name)},
-        ],
-        # Once a table has groupings, every column must be a groupBy dimension
-        # or a calculations entry -- an orphan renders a nonsensical summary.
-        "groupings": [{"id": "by-dim", "groupBy": [dim_id], "calculations": [mea_id]}],
+        "columns": columns,
     }
-    return element, dim_id, mea_id
+    # Grouping only makes sense with both halves. All-dimension or
+    # all-aggregate stays an ungrouped table rather than an invalid grouping.
+    if group_by and calcs:
+        element["groupings"] = [{"id": "by-dim", "groupBy": group_by,
+                                 "calculations": calcs}]
+    return element, config, order
 
 
-def build_variable_control(binding, rows, header, name=None, multiple=True):
+def build_variable_control(binding, values, name=None, multiple=True):
     """A list control the plugin writes into, plus the config key that binds it.
 
     The plugin side of this is a `variable` editor-panel entry:
@@ -326,19 +382,11 @@ def build_variable_control(binding, rows, header, name=None, multiple=True):
     what turns a plugin click into something the rest of the workbook can
     filter on.
 
-    Choices are the distinct values of `header`, so anything the plugin can
-    write is a value the control already accepts. A control element's `id` and
-    its `controlId` must DIFFER, or the publish fails with
+    `values` are the control's choices, so anything the plugin can write is a
+    value the control already accepts. A control element's `id` and its
+    `controlId` must DIFFER, or the publish fails with
     `elements[N].controlId: Duplicate id`.
     """
-    seen, values = set(), []
-    for r in rows:
-        v = r.get(header)
-        if v is None or str(v).strip() == "" or str(v) in seen:
-            continue
-        seen.add(str(v))
-        values.append(str(v))
-
     slug = re.sub(r"[^a-z0-9]+", "-", str(binding).strip().lower()).strip("-") or "var"
     # Keep the binding's own casing -- .title() would turn selectedSeats into
     # "Selectedseats", and a controlId is referenced verbatim elsewhere.
@@ -397,6 +445,13 @@ def main():
     ap.add_argument("--dimension", default=DEFAULT_DIMENSION)
     ap.add_argument("--measure", default=DEFAULT_MEASURE)
     ap.add_argument("--measure-name", default=DEFAULT_MEASURE_NAME)
+    ap.add_argument("--bind", action="append", metavar="KEY[:Display]=FORMULA",
+                    help="with --path, one column per editor-panel binding: "
+                         "--bind zip=STORE_ZIP_CODE --bind 'latitude=Max(STORE_LATITUDE)'. "
+                         "Repeatable, and it replaces --dimension/--measure. Bare column "
+                         "refs group; expressions aggregate. A plugin needing more than "
+                         "a label and a value has no other way to get its columns off a "
+                         "real table.")
 
     # Only needed when the plugin's panel can't be read. With --plugin-src the
     # binding keys come straight from the plugin's own editor panel.
@@ -414,6 +469,10 @@ def main():
                                            "control (it always renders its own label)")
     ap.add_argument("--control-single", action="store_true",
                     help="make --variable-control single-select instead of multi")
+    ap.add_argument("--control-values", metavar="FILE",
+                    help="choices for --variable-control's list control, one per "
+                         "line. Required with --path: the rows live in the warehouse, "
+                         "so the distinct values cannot be read out of the spec.")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
@@ -438,12 +497,21 @@ def main():
                          % ", ".join(extra_elements))
 
     rows = None
+    colmap = {}
     if args.path is not None:
-        table, label_id, value_id = build_warehouse(args)
-        label_key = args.label_key or "label"
-        value_key = args.value_key or "value"
-        described = "%s (warehouse, grouped)" % ".".join(args.path)
-        config_extra = {}
+        table, config_extra, bind_order = build_warehouse(args)
+        label_key = args.label_key or bind_order[0]
+        value_key = args.value_key or (bind_order[1] if len(bind_order) > 1 else "value")
+        label_id = config_extra[label_key]
+        value_id = config_extra.get(value_key, label_id)
+        described = "%s (warehouse%s)" % (".".join(args.path),
+                                          ", grouped" if "groupings" in table else "")
+        if args.bind:
+            unbound = [n for n, _ in panel_cols if n not in config_extra]
+            if unbound:
+                notes.append("plugin binding(s) %s have no --bind, so they will be "
+                             "absent from the plugin's config"
+                             % ", ".join(repr(u) for u in unbound))
     else:
         if args.data:
             rows = load_rows(args.data)
@@ -503,10 +571,11 @@ def main():
         binding, _, col = args.variable_control.partition(":")
         binding = binding.strip()
         col = col.strip()
-        if rows is None:
-            raise SystemExit("build-plugin-workbook: --variable-control needs generated "
-                             "rows to take the control's choices from; it is not "
-                             "supported with --path.")
+        if rows is None and not args.control_values:
+            raise SystemExit("build-plugin-workbook: --variable-control needs the "
+                             "control's choices from somewhere. With --path the rows "
+                             "are in the warehouse, so pass --control-values FILE "
+                             "(one value per line).")
         if panel_entries:
             declared = [e["name"] for e in panel_entries if e["type"] == "variable"]
             if binding not in declared:
@@ -515,23 +584,39 @@ def main():
                     "named %r.\n  Declared: %s\n  The name must match the plugin's "
                     "configureEditorPanel exactly, or the binding is silently absent."
                     % (binding, ", ".join(declared) or "(none)"))
-        if not col:
-            col = panel_cols[0][0] if panel_cols else None
-        if not col or col not in colmap:
-            raise SystemExit("build-plugin-workbook: --variable-control column %r is "
-                             "not in the data.\n  Available: %s"
-                             % (col, ", ".join(colmap)))
+        if args.control_values:
+            with open(args.control_values, encoding="utf-8-sig") as fh:
+                values = [ln.strip() for ln in fh if ln.strip()]
+            if not values:
+                raise SystemExit("build-plugin-workbook: --control-values %s is empty."
+                                 % args.control_values)
+            source_desc = args.control_values
+        else:
+            if not col:
+                col = panel_cols[0][0] if panel_cols else None
+            if not col or col not in colmap:
+                raise SystemExit("build-plugin-workbook: --variable-control column %r is "
+                                 "not in the data.\n  Available: %s"
+                                 % (col, ", ".join(colmap)))
+            seen, values = set(), []
+            for r in rows:
+                v = r.get(col)
+                if v is None or str(v).strip() == "" or str(v) in seen:
+                    continue
+                seen.add(str(v))
+                values.append(str(v))
+            source_desc = repr(col)
         control, control_id, n_values = build_variable_control(
-            binding, rows, col, name=args.control_name,
+            binding, values, name=args.control_name,
             multiple=not args.control_single)
         controls.append(control)
         # The canonical shape Sigma itself stores, read back off a workbook it
         # had normalized: a control binding is an object, unlike a column
         # binding, which is a bare column-id string.
         config[binding] = {"kind": "control", "controlId": control_id}
-        notes.append("control %s (%s, %d choice(s) from %r) bound to the plugin's "
+        notes.append("control %s (%s, %d choice(s) from %s) bound to the plugin's "
                      "`%s` variable" % (control_id, control["selectionMode"],
-                                        n_values, col, binding))
+                                        n_values, source_desc, binding))
 
     plugin = {"id": "plug-viz", "kind": "plugin", "pluginId": args.plugin_id,
               "config": config}

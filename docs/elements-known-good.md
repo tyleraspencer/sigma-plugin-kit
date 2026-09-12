@@ -244,6 +244,21 @@ An element's `id` and its `controlId` must **differ**, or you get
 `controlType: "slider"` and `"range-slider"` are rejected outright. For a
 numeric parameter use `list` + `selectionMode: "single"` + a manual source.
 
+**A control's `source` must be `manual`.** Sourcing its choices from a column
+of an element -- the obvious shape, and what the UI offers --
+
+```json
+"source": { "kind": "element", "elementId": "tbl-data", "columnId": "col-zip" }
+```
+
+is rejected with `document.elements[N]: Invalid kind: "control"` (probed
+2026-09-11 against a warehouse-backed table). So a control whose choices come
+from a real table has to be filled in from a query first: run the distinct
+values through `scripts/api/` MCP `query` (Postgres syntax, tables referenced
+by inodeId) and pass the list to `build-plugin-workbook.py --control-values
+FILE`. That is why `--variable-control` needs `--control-values` under
+`--path`: with warehouse data there are no rows in the spec to take them from.
+
 ## Top level
 
 ```json

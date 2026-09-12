@@ -78,6 +78,31 @@ bash scripts/pipeline.sh sec-bars "SEC Bars" -- \
   --path MY_DB PUBLIC GAMES --dimension TEAM --measure "Sum(WINS)"
 ```
 
+**A plugin needing more than a label and a value** -- a map wants zip, latitude,
+longitude *and* a measure -- names each column with `--bind KEY[:Display]=FORMULA`,
+keyed by its editor-panel binding. A bare column reference groups; an expression
+aggregates. `--dimension`/`--measure` stay as the two-column default.
+
+```bash
+bash scripts/pipeline.sh zip-map "ZIP Map" -- \
+  --path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA \
+  --bind zip:ZIP=STORE_ZIP_CODE \
+  --bind "value:Revenue=Sum(PRICE * QUANTITY)" \
+  --bind "latitude:Latitude=Max(STORE_LATITUDE)" \
+  --bind "longitude:Longitude=Max(STORE_LONGITUDE)" \
+  --variable-control selectedZips --control-values /tmp/zips.txt
+```
+
+`--variable-control` with `--path` additionally needs `--control-values FILE`
+(one per line): a control's `source` must be `manual`, and warehouse rows are
+not in the spec to read the distinct values out of. Get them with the Sigma
+MCP `query` tool -- `SELECT DISTINCT` against the connection, table referenced
+by its inodeId.
+
+Pass `--data` alongside `--path` when you have a sample of the real rows: the
+workbook still binds the warehouse table, but preflight checks the binding
+names against those headers and the bind harness renders them.
+
 Look-and-feel answers land in `plugins/<name>/src/App.jsx`. Interactivity
 answers land in `configureEditorPanel` as a `variable` entry **before** the
 first deploy.
