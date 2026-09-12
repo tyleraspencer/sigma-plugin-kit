@@ -15,5 +15,22 @@ export default defineConfig({
   // aligned so "Point to Development URL" works with no extra configuration.
   server: { port: 5173 },
 
-  build: { outDir: 'dist', emptyOutDir: true },
+  // Hashed asset names are a liability here, not an asset. GitHub Pages serves
+  // index.html with `Cache-Control: max-age=600`, and every deploy REPLACES
+  // dist/assets wholesale -- so for up to ten minutes a browser holding the
+  // previous index.html asks for a hashed bundle that has just been deleted,
+  // gets a 404, and never mounts. The plugin renders as an empty iframe in its
+  // own background colour and Sigma's loading bar spins forever. Stable names
+  // make the worst case "a ten-minute-old build that works" instead.
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+      },
+    },
+  },
 });

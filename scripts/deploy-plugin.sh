@@ -205,7 +205,29 @@ while [ "$attempt" -lt "$max_attempts" ]; do
         curl -sSL --connect-timeout 5 --max-time 20 -o "$served" "$url" 2>/dev/null || true
         if cmp -s "$served" "$publish_dir/index.html"; then
           rm -f "$served"
-          echo "  serving after ${attempt} check(s): 200 $ctype, bytes match" >&2
+          # Matching index.html is NOT enough. It names its bundle, and if that
+          # file does not serve, the iframe mounts nothing: an empty box in the
+          # plugin's own background colour, Sigma's loading bar spinning
+          # forever, and no error anywhere. Seen for real when a browser held a
+          # cached index.html naming a hashed bundle that the next deploy had
+          # already deleted -- hence stable asset names in vite.config.js, and
+          # hence this check.
+          missing=""
+          for ref in $(grep -o 'assets/[^"]*' "$publish_dir/index.html" | sort -u); do
+            acode=$(curl -sSL --connect-timeout 5 --max-time 20 -o /dev/null \
+                      -w '%{http_code}' "$HOST_URL/plugins/$name/$ref" 2>/dev/null || echo 000)
+            [ "$acode" = "200" ] || missing="$missing $ref($acode)"
+          done
+          if [ -n "$missing" ]; then
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              echo "  index.html serves, its asset(s) do not yet:$missing (attempt ${attempt})" >&2
+              sleep 6
+              continue
+            fi
+            echo "deploy-plugin: index.html serves but these assets do not:$missing" >&2
+            exit 1
+          fi
+          echo "  serving after ${attempt} check(s): 200 $ctype, index + assets verified" >&2
           printf '%s\n' "$url"
           exit 0
         fi
