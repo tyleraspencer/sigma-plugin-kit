@@ -126,6 +126,20 @@ single-file example and will read `undefined` at runtime.
 element's **•••** menu → **Point to Development URL**. Changes hot-reload;
 changing editor-panel *options* means re-entering the panel values.
 
+When you do redeploy, redeploy *only*:
+
+```bash
+bash scripts/pipeline.sh my-viz --redeploy     # stops before the workbook
+```
+
+An edit inside the bundle changes neither the `pluginId` nor the workbook
+spec, so steps 6–7 have no work to do — and re-running them used to POST a
+second workbook with a second URL every single time. If the panel, bindings or
+data *did* change, re-run the full command with the same flags: the
+regenerated spec is byte-compared against the one last published, and a real
+difference is PUT into the same workbook rather than posted as a new one. See
+`skills/sigma-plugin-pipeline/SKILL.md` → "Editing after the first build".
+
 ## 2. Deploy
 
 ```bash
@@ -185,6 +199,12 @@ Other subcommands: `list [--name <substr>]`, `get <id>`, `id-for <exact name>`,
 `build-plugin-workbook.py` emits the flat spec shape;
 `publish-workbook.sh post` validates it, wraps it in the `document` envelope,
 POSTs, and runs the schema audit.
+
+`post` always creates a **new** workbook, so it is the wrong verb for an
+update: `put <workbook-id> <spec>` replaces the spec of one that already
+exists, keeping its id and its URL. `pipeline.sh` picks between them — see
+"Iterate against a dev URL" above — and only reaches for `post` on a first
+build or under `--new-workbook`.
 
 The plugin element:
 

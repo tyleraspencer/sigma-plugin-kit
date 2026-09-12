@@ -140,8 +140,9 @@ Scaffolds, preflights, generates a bind harness, deploys to public Pages,
 registers (reusing an existing registration by name), generates a workbook
 bound to real data, publishes, verifies the compiled SQL, prints the workbook
 URL. The preflight is blocking and runs before deploy, so a plugin with a
-known silent-failure mode never gets a pluginId. Override the data source
-after `--`:
+known silent-failure mode never gets a pluginId. That is the *first* build —
+every run after it takes a shorter path, see "Editing after the first build".
+Override the data source after `--`:
 
 ```bash
 bash scripts/pipeline.sh my-viz "My Viz" -- \
@@ -154,10 +155,6 @@ packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
 preflight, deploy and CI each refuse a non-React plugin. Why it was removed:
 `docs/plugins.md` → "Why there is no hand-written-HTML archetype".
 
-Edit `plugins/<name>/src/App.jsx` and re-run. That directory is gitignored —
-the public host repo holds the deployed copy, and only `_react-template` is
-tracked here.
-
 If the plugin's `configureEditorPanel` entries use names other than
 `label`/`value` — check `plugins/<name>/src/App.jsx` —
 pass `-- --label-key <name> --value-key <name>`. Binding the wrong key renders
@@ -165,6 +162,57 @@ the fallback, silently.
 
 Run the four steps by hand only when something fails. They're in
 `docs/plugins.md`, along with the SDK reference and every gotcha.
+
+## Editing after the first build
+
+**Never re-run the whole chain for a visual tweak.** The plugin's URL and its
+`pluginId` are settled at the first deploy and the workbook goes on pointing at
+them, so an edit to `src/App.jsx` changes exactly one thing — the bundle.
+Three loops, cheapest first. Use the one that matches what you changed, and
+stay in loop 1 or 2 until it looks right.
+
+**1. While you're still changing how it looks — the dev server.** No deploy,
+no publish, no Sigma round trip per edit.
+
+```bash
+cd plugins/<name> && npm run dev        # Vite, http://localhost:5173
+```
+
+In the workbook, the plugin element's **•••** menu → **Point to Development
+URL** → `http://localhost:5173`. That's already the `devUrl` every
+registration gets and the port `vite.config.js` pins, so there is nothing to
+configure. Edits hot-reload in place. Changing the editor *panel* means
+re-entering that element's panel values. → `docs/plugins.md` → "Iterate
+against a dev URL"
+
+**2. With no Sigma tab at all — the bind harness.** Rebuild and re-render
+locally; no login, no network, seconds per iteration.
+
+```bash
+( cd plugins/<name> && npm run build ) && \
+  "${SIGMA_PYTHON:-python3}" scripts/verify-plugin-binding.py <name> [--data FILE]
+```
+
+Reload the page it prints and read `document.title`. This is also where you
+resize-test — see the gates section below.
+
+**3. To ship what you have.**
+
+| What changed | Command | What runs |
+| --- | --- | --- |
+| Only the bundle — `src/App.jsx`, styling, a dependency | `bash scripts/pipeline.sh <name> --redeploy` | Stops before the workbook: no spec, no publish, nothing created. The workbook is untouched and serves the new bundle on its next load. |
+| The editor panel, the bindings, the data, the title | `bash scripts/pipeline.sh <name> "Title" -- <the same flags you built with>` | Regenerates the spec and **updates the same workbook in place** — same id, same URL, so a link already shared keeps working. |
+| Not sure | as above | The regenerated spec is byte-compared against the one last published; identical means nothing is published at all. |
+
+Pass the **same** `--data`/`--path`/`--bind` flags you built with. Dropping
+them generates a different spec, which counts as a change and republishes.
+
+`--new-workbook` forces a second, separate workbook, for when you actually
+want one. `--workbook-id <id>` re-attaches a plugin to a workbook the kit has
+lost track of.
+
+`plugins/<name>/` is gitignored — the public host repo holds the deployed copy,
+and only `_react-template` is tracked here.
 
 ## Data: make it fit the plugin
 
@@ -247,6 +295,14 @@ intake (ask) → build → preflight → bind harness → deploy (public URL)
 
 The two gates come first because **deploy and register are the irreversible
 steps.**
+
+That order is the *first* build. Afterwards the irreversible steps have
+already happened, so the chain shrinks — and running the long one anyway is
+how you end up with a folder full of near-identical workbooks:
+
+```
+edit → preflight → bind harness → deploy → confirm registration   (--redeploy)
+```
 
 `PATCH /v2/plugins/{id}` **cannot change `url`**. Registering a URL that
 doesn't serve means delete + re-create, a new `pluginId`, and every workbook

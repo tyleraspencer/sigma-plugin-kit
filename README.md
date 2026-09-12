@@ -23,14 +23,30 @@ bash scripts/pipeline.sh my-viz "My Viz"                # all four steps
 ```
 
 That scaffolds, deploys, registers, generates a workbook bound to real data,
-publishes, verifies the compiled SQL, and prints the workbook URL. Re-running
-reuses the existing registration instead of minting a second `pluginId`.
-Override the data source after `--`:
+publishes, verifies the compiled SQL, and prints the workbook URL. Override
+the data source after `--`:
 
 ```bash
 bash scripts/pipeline.sh my-viz "My Viz" -- \
   --dimension PRODUCT_FAMILY --measure "Sum(QUANTITY)" --measure-name Units
 ```
+
+**The second run is not the first run.** Editing `src/App.jsx` changes the
+bundle and nothing else — the `pluginId` and the workbook both stay valid — so
+ship it without touching the workbook at all:
+
+```bash
+bash scripts/pipeline.sh my-viz --redeploy              # build + deploy, and stop
+```
+
+A full re-run reuses the existing registration rather than minting a second
+`pluginId`, regenerates the spec, byte-compares it against the one last
+published, and **updates that same workbook in place** when it differs — same
+id, same URL, so a shared link keeps working. Nothing differs, nothing is
+published. `--new-workbook` opts back into a fresh one. Faster still, while
+you're iterating on the look: `npm run dev` and point the element at
+`http://localhost:5173` — details in
+[docs/plugins.md](docs/plugins.md).
 
 Every plugin is a Vite + React project, so npm packages — Plotly, Mapbox, D3,
 Recharts — are available from the start and `deploy-plugin.sh` runs the build.
