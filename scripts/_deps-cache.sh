@@ -1,30 +1,21 @@
-# Sourced, not run: a content-addressed store of installed node_modules trees,
-# shared between plugins by HARD LINK.
+# Sourced, not run: installed node_modules trees, shared between plugins by
+# hard link so the second plugin with the same dependencies costs ~1.5s and
+# ~0MB instead of ~7s and 40MB.
 #
 #   . "$repo_root/scripts/_deps-cache.sh"
 #   key="$(deps_cache_key plugins/my-viz)"
 #   deps_cache_link "$key" plugins/my-viz/node_modules   # scaffold: reuse
 #   deps_cache_save "$key" plugins/my-viz/node_modules   # after npm install
 #
-# WHY. Every plugin is its own Vite project with its own node_modules, and the
-# template's is ~40MB / 2,249 files. npm's own tarball cache already makes the
-# second install fast (~7s warm rather than a cold download), so this is not
-# about the network -- it is about not unpacking and not storing the same 40MB
-# once per plugin. Hard links make the second copy near-free in both.
+# Keyed by the dependency SET, not by package.json, whose `name` differs per
+# plugin. Add a dependency and you get a different key and a normal install.
 #
-# This is a modest win, deliberately kept dumb. It is NOT a package manager:
-# if anything looks off, every function here fails soft and the caller falls
-# back to a plain `npm install`, which is always correct.
+# Sharing inodes is safe because npm replaces package directories rather than
+# editing files in place, so installing in one plugin cannot corrupt another's.
 #
-# Keyed by the dependency SET, not the package.json file -- `name` differs per
-# plugin, and two plugins with identical dependencies should share. A plugin
-# that adds a dependency gets a different key and installs normally.
-#
-# SAFETY. npm replaces package directories rather than editing files in place,
-# so a later `npm install` in one plugin unlinks and rewrites instead of
-# corrupting a sibling's shared inode. The store is a cache: deleting
-# $SIGMA_PLUGIN_KIT_CACHE/deps is always safe. Escape hatch for when you would
-# rather not think about any of this: SIGMA_SKIP_DEP_CACHE=1.
+# Not a package manager, and not load-bearing: every function fails soft, and
+# the caller falls back to `npm install`, which is always correct. Deleting
+# $SIGMA_PLUGIN_KIT_CACHE/deps is safe; SIGMA_SKIP_DEP_CACHE=1 turns it off.
 
 deps_cache_root() {
   printf '%s\n' "${SIGMA_PLUGIN_KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sigma-plugin-kit}/deps"

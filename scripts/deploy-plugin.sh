@@ -151,7 +151,6 @@ if [ ! -f "$src/package.json" ]; then
   exit 1
 fi
 
-archetype="react"
 command -v npm >/dev/null 2>&1 || {
   echo "deploy-plugin: npm is not on PATH, and every plugin needs a build." >&2; exit 1; }
 
@@ -299,7 +298,7 @@ if git -C "$CLONE_DIR" diff --cached --quiet; then
 else
   sha="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   git -C "$CLONE_DIR" -c commit.gpgsign=false commit -q \
-    -m "Deploy plugin $name ($archetype, sigma-plugin-kit $sha)"
+    -m "Deploy plugin $name (sigma-plugin-kit $sha)"
   echo "Pushing to $HOST_REPO ..." >&2
   git -C "$CLONE_DIR" push -q origin main
   pushed=1

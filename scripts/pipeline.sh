@@ -26,21 +26,11 @@
 #   bash scripts/pipeline.sh my-viz "My Viz" -- --dimension PRODUCT_FAMILY \
 #       --measure "Sum(QUANTITY)" --measure-name Units
 #
-# THE SECOND RUN IS NOT THE FIRST RUN. Re-running used to repeat all seven
-# steps and POST a brand-new workbook every time, so ten style tweaks left ten
-# workbooks with ten URLs and nine of them dead -- and if the first URL had
-# already been shared, the edit never showed up where anyone was looking. So
-# this script now remembers what it built (per plugin, per org) and does the
-# least work that can still be correct:
-#
-#   * the registration is reused from cache when the deployed URL still
-#     matches it -- zero API calls instead of two
-#   * the workbook spec is regenerated locally and compared against the one
-#     last published. Identical -> nothing is published at all. Different ->
-#     PUT into the SAME workbook, so the id and the shared URL survive.
-#
-# An edit to src/App.jsx changes neither the pluginId nor the spec, so it
-# needs steps 1-5 and nothing else. That is what --redeploy does.
+# A re-run does the least work that is still correct. It remembers the
+# pluginId and workbookId it used, per plugin and per org, and updates that
+# same workbook rather than posting a new one -- so a link you have already
+# shared keeps working. An edit confined to src/App.jsx changes neither, and
+# needs only steps 1-5: that is --redeploy.
 #
 # Flags (before `--`):
 #   --redeploy        stop after step 5: build, preflight, harness, deploy,
@@ -55,7 +45,9 @@
 #
 # State lives under $XDG_CACHE_HOME/sigma-plugin-kit/deploys (override the
 # root with $SIGMA_PLUGIN_KIT_CACHE). Deleting it is safe: the next run falls
-# back to looking the registration up and creating a fresh workbook.
+# back to looking the registration up and creating a fresh workbook. What
+# happens when a plugin or workbook is deleted outside the kit is in
+# docs/plugins.md -> "When something is deleted outside the kit".
 set -euo pipefail
 
 usage() { sed -n '2,/^set -/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2; }
@@ -122,9 +114,14 @@ total=7
 # --- deploy state ---------------------------------------------------------
 # What a re-run needs to know and cannot cheaply re-derive: which pluginId this
 # plugin registered as, which workbook it published into, and the exact spec
-# that workbook currently holds. None of it is secret -- ids and URLs -- so it
-# sits in the same cache root as the host-repo clone rather than going through
-# _state.sh, whose whole job is keeping credentials out of files like this one.
+# that workbook currently holds.
+#
+# Named deploy_state_* rather than state_* because scripts/api/_state.sh
+# already owns state_read/state_write, and those are the CREDENTIAL store --
+# the one that hard-refuses to write anywhere inside the repo. Nothing here is
+# secret: four ids and URLs, in a cache, next to the host-repo clone. The file
+# extension is .ids for the same reason -- `.env` would read as a secrets file
+# in a repo whose .gitignore opens by excluding one.
 #
 # Keyed by org as well as plugin name. The same plugin built against two
 # SIGMA_BASE_URLs has two pluginIds and two workbooks, and letting one
@@ -132,15 +129,15 @@ total=7
 state_dir="${SIGMA_PLUGIN_KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sigma-plugin-kit}/deploys"
 host_slug="$(printf '%s' "$SIGMA_BASE_URL" \
   | sed -e 's#^https\{0,1\}://##' -e 's#[^a-zA-Z0-9]#-#g')"
-state_file="$state_dir/${host_slug}__${name}.env"
+state_file="$state_dir/${host_slug}__${name}.ids"
 state_spec="$state_dir/${host_slug}__${name}.spec.json"
 
-state_get() { # state_get <key> -> value on stdout, empty if unset
+deploy_state_get() { # deploy_state_get <key> -> value on stdout, empty if unset
   [ -f "$state_file" ] || return 0
   sed -n "s/^$1=//p" "$state_file" | tail -1
 }
 
-state_set() { # state_set <key> <value>
+deploy_state_set() { # deploy_state_set <key> <value>
   mkdir -p "$state_dir"
   local tmp="$state_file.tmp.$$"
   if [ -f "$state_file" ]; then
@@ -228,8 +225,8 @@ echo "  $url" >&2
 # the --redeploy path, which writes no workbook, and confirmed with one call
 # on the path that does.
 say "5/$total register"
-cached_pid="$(state_get plugin_id)"
-cached_reg_url="$(state_get plugin_url)"
+cached_pid="$(deploy_state_get plugin_id)"
+cached_reg_url="$(deploy_state_get plugin_url)"
 registration_url="$url"
 pid=""
 pid_unconfirmed=0
@@ -257,8 +254,8 @@ resolve_registration() {
     pid="$(bash scripts/api/register-plugin.sh create "$title" "$url" \
              "$title (sigma-plugin-kit)")"
   fi
-  state_set plugin_id "$pid"
-  state_set plugin_url "$registration_url"
+  deploy_state_set plugin_id "$pid"
+  deploy_state_set plugin_url "$registration_url"
 }
 
 if [ -n "$cached_pid" ] && [ "$cached_reg_url" = "$url" ]; then
@@ -281,7 +278,7 @@ fi
 # bundle the next time someone opens it -- so steps 6 and 7 have no work to do
 # and a POST would only mint a duplicate workbook.
 if [ "$mode" = "redeploy" ]; then
-  remembered_wb_url="$(state_get workbook_url)"
+  remembered_wb_url="$(deploy_state_get workbook_url)"
   say "done (redeploy)"
   echo "  plugin:   $url" >&2
   echo "  pluginId: $pid" >&2
@@ -298,7 +295,7 @@ fi
 # --- 6. workbook ----------------------------------------------------------
 say "6/$total workbook"
 target_wb="$adopt_wb"
-[ -n "$target_wb" ] || target_wb="$(state_get workbook_id)"
+[ -n "$target_wb" ] || target_wb="$(deploy_state_get workbook_id)"
 
 spec="$(mktemp "${TMPDIR:-/tmp}/plugin-spec.XXXXXX.json")"
 trap 'rm -f "$spec"' EXIT
@@ -409,7 +406,7 @@ echo "  workbookId: $wb_id" >&2
 if [ "$verb" != "none" ]; then
   mkdir -p "$state_dir"
   cp "$spec" "$state_spec"
-  state_set workbook_id "$wb_id"
+  deploy_state_set workbook_id "$wb_id"
 fi
 
 # --- 7. verify ------------------------------------------------------------
@@ -418,7 +415,7 @@ fi
 # 'Unknown column "[X]"' in the SQL, with no error anywhere -- so check the
 # compiled SQL, not just the status code.
 say "7/$total verify"
-cached_wb_url="$(state_get workbook_url)"
+cached_wb_url="$(deploy_state_get workbook_url)"
 if [ "$verb" = "none" ] && [ -n "$cached_wb_url" ]; then
   # Nothing was published, and the last run verified this exact spec against
   # this exact workbook. Re-running it would re-prove a fact already proven.
@@ -445,7 +442,7 @@ except Exception: print("")')"
 
   wb_url="$(bash scripts/api/publish-workbook.sh get-meta "$wb_id" 2>/dev/null \
     | "${SIGMA_PYTHON:-python3}" -c 'import json,sys; print(json.load(sys.stdin).get("url",""))')"
-  [ -n "$wb_url" ] && state_set workbook_url "$wb_url"
+  [ -n "$wb_url" ] && deploy_state_set workbook_url "$wb_url"
 fi
 
 say "done"

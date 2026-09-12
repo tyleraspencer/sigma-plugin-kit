@@ -68,7 +68,6 @@ while [ "$#" -gt 0 ]; do
       archetype="${2:-}"
       [ -n "$archetype" ] || { echo "new-plugin: --from needs a shape name (try --from list)" >&2; exit 2; }
       shift 2 ;;
-    --list-archetypes) list_archetypes; exit 0 ;;
     --single)
       echo "new-plugin: the single-file archetype has been removed -- every plugin" >&2
       echo "  is a Vite + React project now. Drop --single; see docs/plugins.md." >&2
