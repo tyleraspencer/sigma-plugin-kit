@@ -12,7 +12,7 @@ Read `docs/plugins.md` before touching the pipeline. The
 Extracted from `ryan-workbook-skill` with plugin conventions from
 `millersigma`; see `NOTICE`.
 
-## The traps, in one line each
+## The traps
 
 Rationale and evidence for all of these live in `docs/`, linked per line.
 `skills/sigma-plugin-pipeline/SKILL.md` is the operating manual and loads
