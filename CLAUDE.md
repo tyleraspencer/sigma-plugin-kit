@@ -14,19 +14,27 @@ Extracted from `ryan-workbook-skill` with plugin conventions from
 
 ## The traps, in one line each
 
-Rationale and evidence for all of these live in
-`skills/sigma-plugin-pipeline/SKILL.md`, which loads automatically when the
-task is building a plugin. Listed here only so an agent editing this repo for
-some other reason doesn't step on one:
+Rationale and evidence for all of these live in `docs/`, linked per line.
+`skills/sigma-plugin-pipeline/SKILL.md` is the operating manual and loads
+automatically when the task is *building* a plugin; this list exists only so an
+agent editing this repo for some other reason doesn't step on one:
 
-- SDK global is `window.SigmaPlugin`, **not** `window.sigmaComputing.*`.
+- Import `client` from `@sigmacomputing/plugin`; **never** reach for a window
+  global. `window.sigmaComputing.*` is defined by no published bundle and
+  `window.SigmaPlugin` only exists under a UMD script tag, which a bundled
+  plugin never uses — both read `undefined` and render the fallback forever.
+  (`docs/plugin-api.md` → "Getting the SDK".)
 - Deploy before registering — `PATCH /v2/plugins/{id}` cannot change `url`.
+  (`docs/plugins.md` → "3. Register".)
 - Plugin hosting must be a **public** repo; this one is private on purpose.
 - Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
-- A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px.
+- A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px,
+  and guard the `ResizeObserver`. (`docs/plugin-api.md` → "Loading, sizing".)
 - `Invalid kind: "<kind>"` means a *field* has a bad value shape.
+  (`docs/elements-known-good.md` → "Decoding".)
 - HTTP 200 does not mean it worked. Check the compiled SQL.
+  (`docs/plugins.md` → "Verifying, and the failures that hide".)
 - Ask the intake questions before scaffolding — data source and look-and-feel
   at minimum. Building first and asking later means a rebuild.
 - Use `scripts/pipeline.sh` rather than running the four steps by hand.
