@@ -315,6 +315,28 @@ pre-aggregated, one per category.
 
 With none of the three, the generator errors rather than inventing something.
 
+#### When something is deleted outside the kit
+
+`pipeline.sh` remembers the `pluginId` and `workbookId` it last used, and
+nothing tells it when you delete one by hand or in the Sigma UI. Both cases
+are handled, but differently, because only one of them is silent:
+
+- **The plugin was deregistered.** A workbook published against a `pluginId`
+  that no longer exists renders an empty iframe, with a 200 on every call and
+  no error anywhere. So the cached id is confirmed with one `GET /v2/plugins`
+  before any publish — and if it is gone, the registration is re-resolved, the
+  spec rebuilt against the new id, and the *existing* workbook rewritten in
+  place, which repairs it instead of leaving the broken one beside a new copy.
+  The check is skipped on `--redeploy`, which writes no workbook and therefore
+  cannot create that failure, and when the spec is unchanged and nothing is
+  published at all.
+- **The workbook was deleted.** The `PUT` fails loudly, so it needs no
+  guessing: the error says the workbook is gone and points at `--new-workbook`
+  and `--workbook-id`.
+
+Deleting `$XDG_CACHE_HOME/sigma-plugin-kit/deploys` is always safe — the next
+run falls back to looking the registration up and creating a fresh workbook.
+
 #### Binding more than two columns
 
 `--dimension`/`--measure` emit exactly two columns, which is not enough for a

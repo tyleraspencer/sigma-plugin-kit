@@ -217,38 +217,63 @@ echo "  $url" >&2
 # --- 5. register (reuse if present) ---------------------------------------
 # The cheapest correct answer first: if a previous run registered this plugin
 # and the URL it registered is still the URL we just deployed to, the
-# registration cannot have changed -- `url` is the one field PATCH refuses to
-# touch. Skipping the lookup is two fewer API calls on every re-run.
+# registration cannot have *changed* -- `url` is the one field PATCH refuses
+# to touch. Skipping the lookup is two fewer API calls on every re-run.
+#
+# It can still have been DELETED, though, outside the kit. That matters only
+# when a workbook is about to be written, and it matters a lot: a workbook
+# published against a pluginId that no longer exists renders an empty iframe,
+# with a 200 on every call and no error on any surface -- the exact silent
+# failure this kit is built to prevent. So the cache is trusted outright on
+# the --redeploy path, which writes no workbook, and confirmed with one call
+# on the path that does.
 say "5/$total register"
 cached_pid="$(state_get plugin_id)"
 cached_reg_url="$(state_get plugin_url)"
 registration_url="$url"
-if [ -n "$cached_pid" ] && [ "$cached_reg_url" = "$url" ]; then
-  pid="$cached_pid"
-  echo "  cached registration for this URL -> $pid" >&2
-elif pid="$(bash scripts/api/register-plugin.sh id-for "$title" 2>/dev/null)" && [ -n "$pid" ]; then
-  echo "  reusing existing registration for '$title' -> $pid" >&2
-  registered_url="$(bash scripts/api/register-plugin.sh get "$pid" 2>/dev/null \
-    | "${SIGMA_PYTHON:-python3}" -c 'import json,sys; print(json.load(sys.stdin).get("url",""))')"
-  if [ -n "$registered_url" ] && [ "$registered_url" != "$url" ]; then
-    # Cache what the registration actually points at, not what we deployed --
-    # otherwise the next run's fast path would match its own wrong guess and
-    # this warning would never print again.
-    registration_url="$registered_url"
-    echo "  WARNING: the existing registration points at a different URL:" >&2
-    echo "    registered: $registered_url" >&2
-    echo "    deployed:   $url" >&2
-    echo "  Sigma's PATCH cannot change a plugin's url. To repoint it you must" >&2
-    echo "  delete and re-create, which mints a new pluginId and breaks every" >&2
-    echo "  workbook already referencing the old one. Continuing with the" >&2
-    echo "  registered URL above." >&2
+pid=""
+pid_unconfirmed=0
+
+# Look the registration up for real: by name, else create it.
+resolve_registration() {
+  if pid="$(bash scripts/api/register-plugin.sh id-for "$title" 2>/dev/null)" && [ -n "$pid" ]; then
+    echo "  reusing existing registration for '$title' -> $pid" >&2
+    registered_url="$(bash scripts/api/register-plugin.sh get "$pid" 2>/dev/null \
+      | "${SIGMA_PYTHON:-python3}" -c 'import json,sys; print(json.load(sys.stdin).get("url",""))')"
+    if [ -n "$registered_url" ] && [ "$registered_url" != "$url" ]; then
+      # Cache what the registration actually points at, not what we deployed --
+      # otherwise the next run's fast path would match its own wrong guess and
+      # this warning would never print again.
+      registration_url="$registered_url"
+      echo "  WARNING: the existing registration points at a different URL:" >&2
+      echo "    registered: $registered_url" >&2
+      echo "    deployed:   $url" >&2
+      echo "  Sigma's PATCH cannot change a plugin's url. To repoint it you must" >&2
+      echo "  delete and re-create, which mints a new pluginId and breaks every" >&2
+      echo "  workbook already referencing the old one. Continuing with the" >&2
+      echo "  registered URL above." >&2
+    fi
+  else
+    pid="$(bash scripts/api/register-plugin.sh create "$title" "$url" \
+             "$title (sigma-plugin-kit)")"
   fi
+  state_set plugin_id "$pid"
+  state_set plugin_url "$registration_url"
+}
+
+if [ -n "$cached_pid" ] && [ "$cached_reg_url" = "$url" ]; then
+  # Taken on trust here, and confirmed in step 6 only if a workbook is about
+  # to be written. A registration's `url` cannot change -- PATCH refuses it --
+  # so the only thing the cache can be wrong about is the plugin having been
+  # DELETED outside the kit. That is harmless until something publishes a
+  # workbook pointing at it, and confirming it now would spend a call on every
+  # re-run including the ones that publish nothing at all.
+  pid="$cached_pid"
+  pid_unconfirmed=1
+  echo "  cached registration for this URL -> $pid" >&2
 else
-  pid="$(bash scripts/api/register-plugin.sh create "$title" "$url" \
-           "$title (sigma-plugin-kit)")"
+  resolve_registration
 fi
-state_set plugin_id "$pid"
-state_set plugin_url "$registration_url"
 
 # --- redeploy: stop here --------------------------------------------------
 # An edit to src/App.jsx changes the bundle and nothing else. The pluginId is
@@ -312,6 +337,28 @@ case "$mode" in
     fi ;;
 esac
 
+# Now, and only now, is a stale cached pluginId dangerous: a workbook
+# published against one that no longer exists renders an empty iframe, 200 on
+# every call, no error on any surface. One confirming call buys that -- on the
+# publish path only, so an unchanged re-run still costs nothing.
+if [ "$verb" != "none" ] && [ "$pid_unconfirmed" -eq 1 ]; then
+  if bash scripts/api/register-plugin.sh get "$pid" >/dev/null 2>&1; then
+    echo "  pluginId $pid confirmed live" >&2
+  else
+    echo "  cached pluginId $pid no longer exists in this org" >&2
+    echo "  (deleted outside the kit) -- re-resolving before publishing." >&2
+    resolve_registration
+    # The spec embeds the pluginId, so it has to be rebuilt against the new
+    # one. The recorded workbook is kept deliberately: it currently points at
+    # a dead plugin, and rewriting it in place repairs it, where publishing a
+    # new one would leave the broken original next to the fix.
+    "${SIGMA_PYTHON:-python3}" scripts/build-plugin-workbook.py \
+      --name "$title" --plugin-id "$pid" --folder-id "$FOLDER_ID" \
+      --plugin-src "plugins/$name" \
+      --out "$spec" "${extra_args[@]+"${extra_args[@]}"}" >&2
+  fi
+fi
+
 publish_failed() { # publish_failed <captured output>
   echo "$1" >&2
   echo "" >&2
@@ -330,8 +377,20 @@ case "$verb" in
     ;;
   put)
     echo "  updating workbook $target_wb in place (same id, same URL)" >&2
-    publish_out="$(bash scripts/api/publish-workbook.sh put "$target_wb" "$spec" 2>&1)" \
-      || publish_failed "$publish_out"
+    if ! publish_out="$(bash scripts/api/publish-workbook.sh put "$target_wb" "$spec" 2>&1)"; then
+      # The usual cause of a PUT failing here is the workbook having been
+      # deleted outside the kit, which the recorded id cannot know about.
+      case "$publish_out" in
+        *not_found*|*inode_archived*|*404*)
+          echo "$publish_out" >&2
+          echo "" >&2
+          echo "  Workbook $target_wb is gone -- deleted or archived outside the kit." >&2
+          echo "  Re-run with --new-workbook to publish a fresh one, or with" >&2
+          echo "  --workbook-id <id> to point at the one you meant." >&2
+          exit 1 ;;
+        *) publish_failed "$publish_out" ;;
+      esac
+    fi
     wb_id="$target_wb"
     ;;
   post)
