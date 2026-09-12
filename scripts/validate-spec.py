@@ -472,6 +472,27 @@ def issues_plugin_refs_resolve(spec: dict) -> list[tuple[str, str]]:
                                 "any element in this spec."))
             continue
 
+        # A grouped element has two readable levels, and naming the element
+        # alone silently picks the wrong one. Without `groupingId` the plugin
+        # reads "All source columns" -- the ungrouped warehouse rows, capped at
+        # the SDK's 25,000 -- each repeating its group's aggregate. It renders
+        # 25,000 rows of one member while the same element draws a correct
+        # five-row table beside it.
+        #
+        # Nothing else catches it: the spec is valid, the element's own SQL
+        # keeps its GROUP BY, publish returns 200, and the bind harness feeds
+        # the plugin rows directly so it never touches this path. Found live
+        # 2026-09-12 on a plugin that had passed every other gate.
+        groupings = src_el.get("groupings") or []
+        if groupings and not source.get("groupingId"):
+            ids = ", ".join(repr(g.get("id")) for g in groupings if isinstance(g, dict))
+            out.append((
+                "fail",
+                f"{loc}: `config.source` names a GROUPED element ({src_id!r}) but sets no "
+                f"`groupingId`, so the plugin reads that element's ungrouped source rows "
+                f"instead of its groups -- every row repeating its group's aggregate, "
+                f"capped at 25,000. Add \"groupingId\": <one of {ids}>."))
+
         # A `variable` binding carries a controlId, not a column id: it is how
         # a plugin reads and writes a workbook control. Collect them so they
         # are not mistaken for broken column bindings below.
