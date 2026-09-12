@@ -1,6 +1,6 @@
 ---
 name: sigma-plugin-pipeline
-description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". Opens with a short intake — synthetic rows vs a real table, visual direction, and anything else specific to the request — then one command runs the whole chain: author a Vite + React plugin against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
+description: 'Use when the user wants to build, deploy, host, register or embed a Sigma Computing custom-visualization plugin — "build me a Sigma plugin", "make a custom viz for Sigma", "host this plugin", "register the plugin with my org", "add the plugin to a workbook", "put a plugin in a new workbook". Opens with a short intake — which Sigma org to build in, synthetic rows vs a real table, visual direction, and anything else specific to the request — then one command runs the whole chain: author a Vite + React plugin against the @sigmacomputing/plugin SDK, deploy to public GitHub Pages, register via POST /v2/plugins for a pluginId, then generate and publish a workbook with the plugin bound to real warehouse data. Does NOT cover authoring ordinary workbooks with no plugin in them, nor Claude Code plugin/skill packaging.'
 ---
 
 # Sigma plugin pipeline
@@ -9,25 +9,42 @@ description: 'Use when the user wants to build, deploy, host, register or embed 
 
 **One `AskUserQuestion` call, before `pipeline.sh` runs.** Deploy and register
 are irreversible and a workbook is something the user shows other people, so
-the two things worth a round trip are the two you would otherwise guess:
-where the data comes from, and what it should look like. Guess the data source
-wrong and it's a rebuild; guess the visual direction wrong and you ship a
-plugin nobody uses.
+the things worth a round trip are the ones you would otherwise guess: which
+org it lands in, where the data comes from, and what it should look like.
+Guess the environment wrong and a `pluginId` gets written into somebody else's
+org; guess the data source wrong and it's a rebuild; guess the visual
+direction wrong and you ship a plugin nobody uses.
 
-Ask **2–4 questions in a single call**, then build. One round only — don't
-come back for a second.
+Ask **3–4 questions in a single call**, then build. One round only — don't
+come back for a second. Questions 1 and 2 have fixed shapes; the rest are
+yours to pick.
 
-**1. Data — always ask.** This is the one question with a fixed shape:
+**1. Environment — always ask, and ask it first.** Registration writes a
+`pluginId` into whatever org the token belongs to, and the org is settled
+before any other answer matters.
 
 | Option | What it means |
 | --- | --- |
-| Synthetic rows *(recommend this first)* | You invent rows that fit the topic and they're compiled into the workbook as a `kind:"sql"` VALUES literal. Self-contained, no warehouse access, works in any org. |
-| A real table | `--path DB SCHEMA TABLE` with `--dimension`/`--measure`. Ask which table, or offer to find it — then actually find it with `list-connections.sh` / `mcp-search.sh` / `mcp-describe.sh` rather than guessing names. |
+| `app.sigmacomputing.com/papercrane` *(recommend this first)* | The default org. `SIGMA_BASE_URL=https://api.sigmacomputing.com`. Known-good connections, the existing plugin registry, a personal destination folder. |
+| Somewhere else | Ask for the org's app URL, then set `SIGMA_BASE_URL` to that org's **region host** — it is not derivable from the app URL, so look it up in `docs/auth.md` → "Egress allowlist" (`aws-api`, `api.eu.aws`, `api.us.azure`, …). Re-auth against that host before building. |
+
+Then **confirm the session is actually pointed there** before `pipeline.sh`
+runs — `bash scripts/api/whoami.sh` prints the host and the signed-in user. A
+token left over from another org will register the plugin in the wrong place
+without complaining, and `PATCH /v2/plugins/{id}` can't move it.
+
+**2. Data — always ask.** The other fixed shape:
+
+| Option | What it means |
+| --- | --- |
+| Synthetic data *(recommend this first)* | You invent rows that fit the topic and they're compiled into the workbook as a `kind:"sql"` VALUES literal. Self-contained, no warehouse access, works in any org. Pass them as `--data <file.csv\|json>`. |
+| Sigma Sample Database — `RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB` | The known-good real table. Bind it with `--path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA` — **the actual table name carries a `_DATA` suffix**; the short name won't resolve. Columns include `STORE_REGION`, `STORE_STATE`, `PRODUCT_FAMILY`, `BRAND`, `QUANTITY`, `PRICE`, `COST`, `DATE`, and it's geocoded (`STORE_ZIP_CODE`, `STORE_LATITUDE`, `STORE_LONGITUDE`), which makes it the go-to for anything map-shaped. Only exists in orgs that have the sample connection — if question 1 picked somewhere else, check before offering it. |
+| Something else — please specify | Any other warehouse table: `--path DB SCHEMA TABLE` with `--dimension`/`--measure` (or `--bind` for more than two columns). Ask which one, or offer to find it — then actually find it with `list-connections.sh` / `mcp-search.sh` / `mcp-describe.sh` rather than guessing names. |
 
 If they pick a real table and can't name one, don't stall: search, propose the
 best match by name, and say you'll fall back to synthetic rows if it's wrong.
 
-**2. Look and feel — always ask.** Pick the axis that most changes the code
+**3. Look and feel — always ask.** Pick the axis that most changes the code
 *for this plugin*, not a generic "what style?". The useful ones:
 
 - **Density** — compact and data-dense, or large and presentation-ready? Drives
@@ -39,7 +56,7 @@ best match by name, and say you'll fall back to synthetic rows if it's wrong.
 - **Branding** — Sigma-native look, or the user's/a third party's colors and
   logos?
 
-**3–4. Whatever else actually changes the build.** Ask only when the answer
+**4. Whatever else actually changes the build.** Ask only when the answer
 would send you down a different path. The usual candidates:
 
 - **Does clicking it do anything?** A plugin that filters the rest of the
@@ -56,9 +73,11 @@ would send you down a different path. The usual candidates:
 ### Rules for the intake
 
 - **Skip anything the request already answers.** "A bar chart of SEC team wins
-  with ESPN logos" has already told you the form, the entities and the
-  branding — ask about the data source and the color scale, and stop.
-- **Never ask four out of habit.** Two good questions beat four padded ones.
+  with ESPN logos in papercrane" has already told you the org, the form, the
+  entities and the branding — ask about the data source and the color scale,
+  and stop.
+- **Never ask four out of habit.** Environment and data are fixed; add a third
+  only if it changes the code, and a fourth only if it changes the code too.
 - **Put the recommended option first** and label it, so "whatever you think" is
   a one-click answer.
 - **If the user waves you off** — "just build it", "you pick" — take the
@@ -179,7 +198,7 @@ bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
   the plugin silently falls back to numbers hardcoded in its own HTML.
   `insert-rows` is rejected, row-ish fields are dropped, and there's no REST
   write endpoint. Evidence in `docs/plugins.md`.
-- Synthetic-vs-real is question 1 of the intake — ask it, then build to the
+- Synthetic-vs-real is question 2 of the intake — ask it, then build to the
   answer. Still report which one you used and what the rows represent.
 
 ## Two gates run before anything irreversible
