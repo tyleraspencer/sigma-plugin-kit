@@ -62,8 +62,9 @@ would send you down a different path. The usual candidates:
 - **Does clicking it do anything?** A plugin that filters the rest of the
   dashboard needs a `variable` panel entry wired to a workbook control — that's
   structural, not a later tweak. See the variables section below.
-- **What are the entities?** Teams, regions, stages, SKUs. Real names beat
-  "Team A" and you need them before you can write the synthetic rows.
+- **What are the entities?** Brands, product families, store regions, funnel
+  stages, SKUs. Real names beat "Brand A" and you need them before you can
+  write the synthetic rows.
 - **Thresholds and rules** for anything computed — what counts as good, how a
   score is weighted, where a cutoff sits.
 - **Multiple elements?** A plugin can bind more than one; ask if the request
@@ -72,10 +73,10 @@ would send you down a different path. The usual candidates:
 
 ### Rules for the intake
 
-- **Skip anything the request already answers.** "A bar chart of SEC team wins
-  with ESPN logos in papercrane" has already told you the org, the form, the
-  entities and the branding — ask about the data source and the color scale,
-  and stop.
+- **Skip anything the request already answers.** "A bar chart of Plugs revenue
+  by product family, in papercrane, off the sample retail table" has already
+  told you the org, the source, the form and the entities — ask about the color
+  scale and whether clicking it filters anything, and stop.
 - **Never ask four out of habit.** Environment and data are fixed; add a third
   only if it changes the code, and a fourth only if it changes the code too.
 - **Put the recommended option first** and label it, so "whatever you think" is
@@ -90,11 +91,12 @@ would send you down a different path. The usual candidates:
 
 ```bash
 # synthetic rows, entities the user named
-bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
+bash scripts/pipeline.sh brand-bars "Brand Bars" -- --data /tmp/brands.csv
 
-# real table
-bash scripts/pipeline.sh sec-bars "SEC Bars" -- \
-  --path MY_DB PUBLIC GAMES --dimension TEAM --measure "Sum(WINS)"
+# real table — the Sigma Sample Database option from question 2
+bash scripts/pipeline.sh brand-bars "Brand Bars" -- \
+  --path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA \
+  --dimension BRAND --measure "Sum(PRICE * QUANTITY)" --measure-name Revenue
 ```
 
 **A plugin needing more than a label and a value** -- a map wants zip, latitude,
@@ -176,17 +178,24 @@ There is **no built-in row set**. `pipeline.sh` passes `--plugin-src`, so the
 generator reads the plugin's own `configureEditorPanel`, takes its column
 bindings and `allowedTypes`, and synthesizes typed columns named to match —
 it always binds, and the binding keys come from the plugin rather than a
-guess. Values are visible placeholders ("Team A", "Team B").
+guess. Values are visible placeholders — each text column gets its own binding
+name plus a letter, so a `brand` binding yields "Brand A", "Brand B".
 
 **Your job is to replace the placeholders with rows that mean something.**
 Invent data appropriate to the plugin and pass `--data <file.csv|json>`:
-team names for a standings chart, funnel stages for a funnel, regions for a
-map. Don't ship "Team A". If the intake asked which entities, use the ones
-the user named.
+brands or product families for a ranking chart, funnel stages for a funnel,
+store regions or ZIPs for a map. Don't ship "Brand A". If the intake asked
+which entities, use the ones the user named.
 
 ```bash
-bash scripts/pipeline.sh sec-bars "SEC Bars" -- --data /tmp/teams.csv
+bash scripts/pipeline.sh brand-bars "Brand Bars" -- --data /tmp/brands.csv
 ```
+
+**Stay in the Plugs Electronics world.** No sports, teams, leagues or seasons —
+not in synthetic rows, not in plugin names, not in examples. Reach for retail
+instead: brands, product families, SKUs, stores, store regions and states,
+revenue, quantity, margin. It keeps every demo consistent with the sample
+retail table and with the workbooks these plugins land next to.
 
 - Rows are compiled into a `SELECT ... FROM (VALUES ...)` literal published as
   a `kind:"sql"` element, so the data lives in the workbook spec.
