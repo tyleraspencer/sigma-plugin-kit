@@ -212,11 +212,23 @@ while [ "$attempt" -lt "$max_attempts" ]; do
           # cached index.html naming a hashed bundle that the next deploy had
           # already deleted -- hence stable asset names in vite.config.js, and
           # hence this check.
+          # Byte-compare the assets too, not just their status. Asset names are
+          # deliberately stable (see vite.config.js), which makes the
+          # index.html comparison above pass INSTANTLY on every deploy --
+          # index.html no longer changes. Without this the whole wait would be
+          # theatre: it would report success while Pages still served the
+          # previous bundle.
           missing=""
           for ref in $(grep -o 'assets/[^"]*' "$publish_dir/index.html" | sort -u); do
-            acode=$(curl -sSL --connect-timeout 5 --max-time 20 -o /dev/null \
+            got="$(mktemp "${TMPDIR:-/tmp}/asset.XXXXXX")"
+            acode=$(curl -sSL --connect-timeout 5 --max-time 30 -o "$got" \
                       -w '%{http_code}' "$HOST_URL/plugins/$name/$ref" 2>/dev/null || echo 000)
-            [ "$acode" = "200" ] || missing="$missing $ref($acode)"
+            if [ "$acode" != "200" ]; then
+              missing="$missing $ref($acode)"
+            elif ! cmp -s "$got" "$publish_dir/$ref"; then
+              missing="$missing $ref(stale)"
+            fi
+            rm -f "$got"
           done
           if [ -n "$missing" ]; then
             if [ "$attempt" -lt "$max_attempts" ]; then
