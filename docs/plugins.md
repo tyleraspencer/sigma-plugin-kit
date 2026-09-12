@@ -315,6 +315,34 @@ pre-aggregated, one per category.
 
 With none of the three, the generator errors rather than inventing something.
 
+#### A grouped element has two levels, and the plugin must name one
+
+```json
+"source": { "kind": "element", "elementId": "tbl-data", "groupingId": "by-dim" }
+```
+
+**`groupingId` is not optional when the bound element has `groupings`.** Leave
+it out and the plugin reads "All source columns" — the element's *ungrouped*
+warehouse rows, capped at the SDK's 25,000, each repeating its group's
+aggregate. A five-region revenue plugin renders 25,000 rows of `West / 731.5M`
+while the very same element draws a correct five-row table underneath it,
+because the table reads the grouping and the plugin does not.
+
+Nothing else catches this. The spec validates. The element's own SQL compiles
+with its `GROUP BY` intact, so the `verify` step passes. Publish returns 200.
+The bind harness hands the plugin rows directly, so it never exercises this
+path at all. It has to be right when the spec is generated — which
+`build-plugin-workbook.py` now does, and `validate-spec.py`'s
+`plugin-refs-resolve` fails a spec that gets it wrong.
+
+The value matches the grouping's own `id`. The shape was confirmed by setting
+**Source grouping** in the editor panel and reading the spec back, not
+invented — the editor exposes the same choice as a dropdown, which is the
+manual fix for a workbook built before this was handled.
+
+`--data` rows are pre-aggregated (one row per category) so they produce no
+grouping, and no `groupingId` — correct, and the check stays quiet.
+
 #### A published workbook needs a human
 
 **The spec API writes the workbook's draft, not its published version.** POST

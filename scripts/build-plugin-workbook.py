@@ -561,7 +561,28 @@ def main():
         label_key = args.label_key or (panel_cols[0][0] if panel_cols else "label")
         value_key = args.value_key or (panel_cols[1][0] if len(panel_cols) > 1 else "value")
 
-    config = {"source": {"kind": "element", "elementId": "tbl-data"}}
+    # A GROUPED element has two readable levels, and binding the element alone
+    # silently picks the wrong one. `{kind: element, elementId}` resolves to
+    # "All source columns" -- the ungrouped warehouse rows, capped at the SDK's
+    # 25,000 -- each carrying its group's aggregate repeated. The plugin then
+    # renders 25,000 rows of "West / 731.5M" while the very same element draws
+    # a correct five-row table underneath it, because the table reads the
+    # grouping and the plugin does not.
+    #
+    # Nothing catches this: the spec validates, the element's own SQL compiles
+    # with its GROUP BY intact, publish returns 200, and the bind harness feeds
+    # the plugin rows directly so it never exercises this path at all. It has
+    # to be right at generation time.
+    #
+    # `groupingId` names the grouping to read, and matches the id
+    # build_warehouse gives it. Shape confirmed by setting "Source grouping" in
+    # the editor panel and reading the spec back -- not invented.
+    source = {"kind": "element", "elementId": "tbl-data"}
+    groupings = table.get("groupings") or []
+    if groupings:
+        source["groupingId"] = groupings[0]["id"]
+
+    config = {"source": source}
     config.update(config_extra)
     config.setdefault(label_key, label_id)
     config.setdefault(value_key, value_id)
