@@ -61,7 +61,7 @@ would send you down a different path. The usual candidates:
 
 - **Does clicking it do anything?** A plugin that filters the rest of the
   dashboard needs a `variable` panel entry wired to a workbook control — that's
-  structural, not a later tweak. See the variables section below.
+  structural, not a later tweak. See "Before you write a panel" below.
 - **What are the entities?** Brands, product families, store regions, funnel
   stages, SKUs. Real names beat "Brand A" and you need them before you can
   write the synthetic rows.
@@ -150,15 +150,9 @@ bash scripts/pipeline.sh my-viz "My Viz" -- \
 
 `pipeline.sh` scaffolds a **Vite + React** project — the only archetype. npm
 packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
-`deploy-plugin.sh` runs the build.
-
-There is no hand-written-HTML archetype. It was removed because a page loading
-the SDK's UMD bundle from a CDN renders fallback data forever if React isn't
-loaded ahead of it — React is an external of that bundle — and the only symptom
-is one uncaught `u.createContext is not a function`. `preflight-plugin.py`,
-`deploy-plugin.sh` and CI each refuse a non-React plugin. Plugins already
-deployed under the old archetype keep serving, but can't be re-deployed until
-ported.
+`deploy-plugin.sh` runs the build. There is no hand-written-HTML archetype;
+preflight, deploy and CI each refuse a non-React plugin. Why it was removed:
+`docs/plugins.md` → "Why there is no hand-written-HTML archetype".
 
 Edit `plugins/<name>/src/App.jsx` and re-run. That directory is gitignored —
 the public host repo holds the deployed copy, and only `_react-template` is
@@ -197,18 +191,14 @@ instead: brands, product families, SKUs, stores, store regions and states,
 revenue, quantity, margin. It keeps every demo consistent with the sample
 retail table and with the workbooks these plugins land next to.
 
-- Rows are compiled into a `SELECT ... FROM (VALUES ...)` literal published as
-  a `kind:"sql"` element, so the data lives in the workbook spec.
-- **A real source when the intake picks one**: `--path DB SCHEMA TABLE`
-  plus `--dimension`/`--measure`. Discover it with `list-connections.sh`,
-  `mcp-search.sh`, `mcp-describe.sh` — don't guess names. If the user wants a
-  real table but can't name it, search and propose one rather than stalling.
-- **Never build an input table for fabricated rows.** It publishes empty and
-  the plugin silently falls back to numbers hardcoded in its own HTML.
-  `insert-rows` is rejected, row-ish fields are dropped, and there's no REST
-  write endpoint. Evidence in `docs/plugins.md`.
-- Synthetic-vs-real is question 2 of the intake — ask it, then build to the
-  answer. Still report which one you used and what the rows represent.
+Rows are compiled into a `SELECT ... FROM (VALUES ...)` literal published as a
+`kind:"sql"` element, so the data lives in the workbook spec. **Never build an
+input table for fabricated rows** — it publishes empty and the plugin silently
+falls back to numbers hardcoded in its own source. There is no REST write
+endpoint and there is no workaround; `docs/plugins.md` has the evidence.
+
+Whichever source question 2 picked, **report which one you used** and what the
+rows represent.
 
 ## Two gates run before anything irreversible
 
@@ -240,6 +230,11 @@ Open the URL it prints. The verdict lands in the page, in `document.title`
 (`HARNESS PASS` / `HARNESS FAIL`) and in `window.__HARNESS__`, so one
 `javascript_tool` call or a glance at the tab title is enough.
 
+The harness iframe is **resizable** — drag it narrow and tall, then short and
+wide, before you call it done. Anything that clips, letterboxes or leaves dead
+space is a bug to fix now; after deploy, seeing it needs a Sigma login the
+in-app browser doesn't have.
+
 Escape hatches, for when a check is wrong rather than the plugin:
 `SIGMA_SKIP_PREFLIGHT=1`, `SIGMA_SKIP_BINDTEST=1`.
 
@@ -262,108 +257,65 @@ re-checks.
 Hosting must be a **public** repo — Sigma fetches the URL anonymously for the
 iframe.
 
-## Never invent a field name
+## Four things that fail silently
 
-Copy element shapes from `docs/elements-known-good.md`. It has every verified
-shape plus a list of known-rejected ones, so nothing gets re-probed.
+These are the ones you cannot discover by reading a status code, so they have
+to be in front of you before you write the plugin. Each links to the doc that
+proves it — go there when one actually bites.
 
-When a publish fails with `Invalid kind: "<kind>"`, read it as **a field has
-the wrong value shape** — not "this element kind is unsupported". Sigma
-rejects known fields carrying bad shapes and silently drops unknown field
-names. Bisect from a known-good shape, one field at a time; the message has no
-further hints. A *structural* error instead ("an action must have at least one
-effect") means that part parsed fine.
+**Import the client, never a window global.**
+`import { client } from '@sigmacomputing/plugin'`.
+`window.sigmaComputing.plugin.client` is widely copied and defined by no
+published bundle; `window.SigmaPlugin` is real but exists only under a UMD
+script tag, which a bundled plugin never uses. Either reads `undefined` and the
+plugin renders its fallback forever, looking fine in a screenshot.
+`preflight-plugin.py`'s `sdk-global` check fails both, and `deploy-plugin.sh`
+runs it. → `docs/plugin-api.md` → "Getting the SDK"
 
-## HTTP 200 does not mean it worked
+**If the plugin shows its demo data in Sigma, the binding is wrong.** That
+fallback is exactly what renders when nothing resolves — a wrong `pluginId`, a
+config binding naming a column that doesn't exist, a bare `[COLUMN]` on a
+warehouse source. All of them publish with HTTP 200. Don't infer success from a
+200; run `verify-plugin-binding.py`, which reproduces the same
+fallback-vs-bound distinction locally, before deploy. →
+`docs/plugins.md` → "Verifying, and the failures that hide"
 
-Both of these publish clean and fail silently:
+**The plugin must fill the whole iframe at any size, and re-lay-out when that
+size changes.** The workbook author sizes and resizes the element; a plugin
+rendering at a size it chose itself is wrong at every size but one. In
+practice: `height: 100%` down the chain, no fixed `px`/`vh`/`vw` anywhere, and
+a `ResizeObserver` on `document.body` that **compares dimensions before
+re-rendering** — an unguarded one rewrites DOM inside the node it observes and
+feeds itself forever, pinning a core with an empty console. The first
+measurement is often `0`; render from it anyway and re-render on change.
+`preflight-plugin.py`'s `resize-observer-guard` fails the unguarded shape and
+`_react-template/src/App.jsx` has the one to copy. Flex `min-height: 0`, the
+per-library switches (Recharts `<ResponsiveContainer>`, Plotly `responsive`,
+ECharts `chart.resize()`, canvas `devicePixelRatio`) and the rest are in →
+`docs/plugin-api.md` → "Loading, sizing, errors"
 
-- A **bare `[COLUMN]`** on a warehouse source compiles to literal
-  `Unknown column "[COLUMN]"`. Must be `[TABLE/COLUMN]`.
-  `build-plugin-workbook.py` qualifies these for you, `validate-spec.py`'s
-  `warehouse-refs-qualified` catches hand-written ones, and `pipeline.sh`
-  greps the compiled SQL.
-- A wrong `pluginId`, or a config binding naming a nonexistent column, renders
-  an empty iframe. `validate-spec.py` catches the binding; only
-  `register-plugin.sh get "$PID"` proves the plugin is really registered.
+**`Invalid kind: "<kind>"` means a *field* has the wrong value shape** — not
+that the element kind is unsupported. Sigma rejects known fields carrying bad
+shapes and silently drops unknown field names, so copy element shapes rather
+than inventing them. → `docs/elements-known-good.md`, which has every verified
+shape plus the known-rejected list, and the full decoder
 
-**If the plugin shows its demo data in Sigma, the binding is wrong** — that
-fallback is what renders when nothing resolves. Check before reporting success.
+## Before you write a panel
 
-Checking that used to need eyes on the rendered iframe, which needs a Sigma
-login the in-app browser does not have. It does not any more:
-`verify-plugin-binding.py` reproduces the same fallback-vs-bound distinction
-locally, before deploy. Run it rather than inferring success from a 200.
+`docs/plugin-api.md` is the SDK reference — **read it, not the help centre**,
+which covers about a third of the API and gets several things wrong
+(`allowTypes` vs `allowedTypes`, `config.set`'s signature, which namespace
+`getElementColumns` lives on).
 
-## Writing the plugin
+Two things that change what you ask in the intake, so they're here rather than
+only there:
 
-Import the client — `import { client } from '@sigmacomputing/plugin'` — and
-never reach for a window global. `window.sigmaComputing.plugin.client` is
-widely copied and defined by **no published bundle**;  `window.SigmaPlugin` is
-real but only exists when the UMD build is loaded from a script tag, which a
-bundled plugin never does. Either one reads `undefined` and the plugin renders
-its fallback forever, looking fine in a screenshot. `preflight-plugin.py`'s
-`sdk-global` check fails on both, and `deploy-plugin.sh` runs it.
-
-**`docs/plugin-api.md` is the API reference — read it, not the help centre.**
-The help pages cover about a third of the SDK and get several things wrong
-(`allowTypes` vs `allowedTypes`, groups holding only `text`, `config.set`'s
-signature, which namespace `getElementColumns` lives on).
-
-Things worth knowing before you write a panel:
-
-- **14 editor-panel types**, not the handful the help page lists: `group`,
-  `element`, `column`, `text`, `toggle`, `checkbox`, `radio`, `dropdown`,
-  `color`, `variable`, `interaction`, `action-trigger`, `action-effect`,
-  `url-parameter`.
-- `column` requires **both** `source` and `allowMultiple`. `allowedTypes` is
-  an **allowlist**.
+- **`variable` is the two-way channel to a workbook control** — the only way a
+  plugin cross-filters the rest of the dashboard. It has to be declared in
+  `configureEditorPanel` before the first deploy, which makes it structural.
 - **A plugin can bind several elements** — declare multiple `element` entries.
-- **`variable` is the two-way channel to a workbook control**: read with
-  `getVariable`, write with `setVariable`, and the *current* value lives at
-  `.defaultValue.value` despite the name. This is how a plugin cross-filters.
-  Do **not** use the old projected-`[controlId]`-column trick; it's retracted.
-- `secure: true` on a `text` entry for an API token.
-- Data is **column-keyed parallel arrays**, capped at 25,000 values.
 
-## Fill the frame, always
-
-**The plugin must paint the entire iframe at whatever size it is given, and
-re-lay-out whenever that size changes.** The workbook author sizes the element,
-not you, and they resize it freely — dragging the element, toggling the editor
-panel, switching to a phone layout, expanding to full screen. A plugin that
-renders at a size it chose itself is wrong at every size but one.
-
-What that means concretely:
-
-- `html, body, #root { height: 100% }` in `index.html`, and the root container
-  `width: 100%; height: 100%`. The template ships this; don't undo it.
-- **No fixed pixel width or height** on the root, the chart, or the canvas —
-  and no `vh`/`vw` either. The iframe is the viewport only by accident; size
-  everything from the parent box.
-- Flex or grid for layout, with `minHeight: 0` on any child that has to shrink
-  or scroll. Without it a flex child refuses to go below its content height and
-  the plugin overflows the frame instead of fitting it.
-- Content that can't fit gets an internal scroll region or drops rows — never
-  an iframe-level scrollbar, and never clipped content with no way to reach it.
-- Nothing may depend on the size at first paint. Sigma mounts the iframe before
-  the element settles, so the first measurement is often `0` — render from the
-  measurement you have now, and re-render when it changes.
-
-Measure with a `ResizeObserver` on `document.body`, and **compare the
-dimensions before re-rendering**. Re-rendering rewrites DOM inside the observed
-element, so an unguarded observer feeds itself forever — a pinned CPU core with
-an empty console. `preflight-plugin.py`'s `resize-observer-guard` check fails
-on an observer with no size comparison; `_react-template/src/App.jsx` has the
-shape to copy.
-
-Charting libraries have their own switch for this — use it instead of hand-
-rolling: Recharts `<ResponsiveContainer>`, Plotly `config={{responsive: true}}`
-with `layout.autosize` and `useResizeHandler`, ECharts `chart.resize()` on the
-observer tick, D3/canvas re-read `clientWidth`/`clientHeight` every tick and
-re-scale the ranges (and multiply by `devicePixelRatio` for canvas).
-
-Verify it: the bind harness from `verify-plugin-binding.py` renders the plugin
-in a resizable iframe. Drag it narrow and tall, then short and wide. Anything
-that clips, letterboxes, or leaves dead space at a size is a bug to fix before
-deploy — after deploy the only way to see it is a Sigma login.
+Everything else about the panel — all 14 types, `column` needing both `source`
+and `allowMultiple`, `allowedTypes` being an allowlist, `secure: true` for
+tokens, the column-keyed parallel-array data shape and its 25,000-value cap —
+is reference. Look it up when you write the panel.

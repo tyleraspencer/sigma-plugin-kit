@@ -8,10 +8,11 @@ plugin bound to its data.
 ask  →  build  →  deploy (public URL)  →  register (pluginId)  →  workbook (bind + publish)
 ```
 
-The `ask` step is a short intake — synthetic rows or a real table, visual
-direction, and whatever else the specific request leaves open. It runs before
-anything is scaffolded, because deploy and register can't be undone. Question
-set: [SKILL.md](skills/sigma-plugin-pipeline/SKILL.md).
+The `ask` step is a short intake — which Sigma org to build in, synthetic rows
+or a real table, visual direction, and whatever else the specific request
+leaves open. It runs before anything is scaffolded, because deploy and register
+can't be undone. Question set:
+[SKILL.md](skills/sigma-plugin-pipeline/SKILL.md).
 
 ```bash
 bash scripts/doctor.sh                                  # check the host
