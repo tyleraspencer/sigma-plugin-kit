@@ -14,7 +14,7 @@
 # and greps the markers. Any hit means a formula doesn't resolve.
 #
 # Adapted from the upstream sigma-workbooks skill's verify-workbook.sh
-# to use ryan's _env.sh sourcing + sigma_curl 401-retry helper.
+# to use this kit's _env.sh sourcing + sigma_curl 401-retry helper.
 #
 # Usage: scripts/api/verify-workbook.sh <workbook-id>
 # Exit codes:

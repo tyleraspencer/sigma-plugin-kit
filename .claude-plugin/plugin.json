@@ -1,7 +1,7 @@
 {
   "name": "sigma-plugin-kit",
   "version": "0.3.0",
-  "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins: scaffold a single-file plugin, deploy it to public GitHub Pages, register it via POST /v2/plugins, and publish a workbook with the plugin bound to real warehouse data.",
+  "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins: scaffold a Vite + React plugin, deploy it to public GitHub Pages, register it via POST /v2/plugins, and publish a workbook with the plugin bound to real warehouse data.",
   "author": { "name": "Tyler Spencer" },
   "repository": "https://github.com/tyleraspencer/sigma-plugin-kit",
   "skills": "./skills/"

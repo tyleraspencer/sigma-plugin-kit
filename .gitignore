@@ -36,7 +36,6 @@ workbooks/
 # plugin HTML -- keeping a second copy here drifts silently, since nothing
 # compares them. Only the template new-plugin.sh copies from is tracked.
 plugins/*/
-!plugins/_template/
 !plugins/_react-template/
 
 # Build artefacts inside a React-archetype plugin. The template itself is

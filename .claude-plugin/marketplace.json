@@ -9,7 +9,7 @@
     {
       "name": "sigma-plugin-kit",
       "source": { "source": "url", "url": "https://github.com/tyleraspencer/sigma-plugin-kit.git" },
-      "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins: scaffold a single-file plugin, deploy it to public GitHub Pages, register it via POST /v2/plugins, and publish a workbook with the plugin bound to real warehouse data.",
+      "description": "End-to-end toolkit for Sigma Computing custom-visualization plugins: scaffold a Vite + React plugin, deploy it to public GitHub Pages, register it via POST /v2/plugins, and publish a workbook with the plugin bound to real warehouse data.",
       "version": "0.3.0",
       "author": { "name": "Tyler Spencer" },
       "keywords": ["sigma", "sigma-computing", "plugin", "custom-visualization", "workbook", "github-pages", "analytics", "business-intelligence"],

@@ -320,7 +320,7 @@ REDIRECT_URI="http://127.0.0.1:${REDIRECT_PORT}/oauth/callback"
 REG=$(curl -sS -X POST "$REGISTER_URL" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg r "$REDIRECT_URI" --arg s "$SCOPE" '{
-    redirect_uris: [$r], client_name: "ryan-workbook-skill", scope: $s,
+    redirect_uris: [$r], client_name: "sigma-plugin-kit", scope: $s,
     token_endpoint_auth_method: "none"
   }')")
 CLIENT_ID=$(printf '%s' "$REG" | jq -r '.client_id // empty')

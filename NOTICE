@@ -13,9 +13,8 @@ workbook-manifest.py, harvest-workbook.sh, the Cowork/Cortex skill-packaging
 harness, and 12 of validate-spec.py's checks) has since been removed as
 unused here.
 
-Plugin conventions -- the single-file index.html pattern, the SDK-from-unpkg
-approach, the synthetic-fallback idea, and POST /v2/plugins registration --
-were derived from:
+Plugin conventions -- the synthetic-fallback idea and POST /v2/plugins
+registration -- were derived from:
 
     millersigma
     https://github.com/cmiller-coder/millersigma
@@ -23,9 +22,16 @@ were derived from:
 
     whose plugin skills in turn credit neil-oliver/sigma-plugin-skills.
 
-No code was copied from millersigma; plugins/_template/index.html is written
-from scratch, and notably corrects the SDK global those plugins use (see
-docs/plugins.md -> "The SDK global is not what most examples say").
+Two further conventions taken from there have since been dropped: the
+single-file index.html pattern and loading the SDK from a CDN. Every plugin is
+now a Vite + React project that bundles @sigmacomputing/plugin from npm, and
+deploy-plugin.sh refuses anything without a package.json. The reason is in
+docs/plugins.md -> "Why there is no hand-written-HTML archetype": a page that
+pulls the UMD bundle from a CDN without loading React first leaves
+window.SigmaPlugin a bare {}, and the plugin renders its fallback forever.
+
+No code was copied from millersigma; plugins/_react-template/ is written from
+scratch.
 
 LICENSING STATUS: neither upstream repository publishes a LICENSE file, so no
 license has been granted for redistribution or modification of that code.
