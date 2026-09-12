@@ -12,8 +12,10 @@ Data comes from one of three places, in priority order:
                  script reads its `configureEditorPanel` declaration, takes the
                  column bindings and their `allowedTypes`, and generates
                  correctly-typed columns named to match -- so the plugin binds
-                 with no guesswork. Values are obvious placeholders ("Team A",
-                 "Team B"): the *shape* is right, the meaning is not.
+                 with no guesswork. Values are obvious placeholders -- each
+                 text column gets its binding name plus a letter, so a `brand`
+                 binding yields "Brand A", "Brand B". The *shape* is right,
+                 the meaning is not.
                  pipeline.sh passes this automatically.
 
   --path         A real warehouse table instead, grouped by --dimension with

@@ -113,13 +113,13 @@ into "Units Sold".
   "source": {
     "kind": "sql",
     "connectionId": "<conn-uuid>",
-    "statement": "SELECT\n  v.c1::varchar AS TEAM,\n  v.c2::float AS VALUE\nFROM (VALUES\n  ('Team A', 4200.0),\n  ('Team B', 3283.0)\n) AS v(c1, c2)"
+    "statement": "SELECT\n  v.c1::varchar AS BRAND,\n  v.c2::float AS VALUE\nFROM (VALUES\n  ('Brand A', 4200.0),\n  ('Brand B', 3283.0)\n) AS v(c1, c2)"
   },
   "columns": [
-    { "id": "col-team",  "name": "TEAM",  "formula": "[Custom SQL/TEAM]" },
+    { "id": "col-brand", "name": "BRAND", "formula": "[Custom SQL/BRAND]" },
     { "id": "col-value", "name": "VALUE", "formula": "[Custom SQL/VALUE]" }
   ],
-  "order": ["col-team", "col-value"]
+  "order": ["col-brand", "col-value"]
 }
 ```
 

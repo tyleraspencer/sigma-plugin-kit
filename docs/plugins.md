@@ -251,12 +251,14 @@ falls into and nobody notices is meaningless.
 
 **1. `--data FILE` — rows you invent. Prefer this.** A `.csv`/`.tsv` or a JSON
 array of objects; types are inferred per column, and `'` escapes to `''`.
-Make them mean something for the plugin at hand: team names for a standings
-chart, funnel stages for a funnel.
+Make them mean something for the plugin at hand: brands or product families
+for a ranking chart, funnel stages for a funnel, store regions for a map.
+Keep them in the Plugs Electronics retail world — no sports, teams or leagues,
+so an example and a real binding share a vocabulary.
 
 ```bash
-python3 scripts/build-plugin-workbook.py --name "SEC Standings" \
-  --plugin-id "$PID" --data teams.csv
+python3 scripts/build-plugin-workbook.py --name "Brand Revenue" \
+  --plugin-id "$PID" --data brands.csv
 ```
 
 **2. `--plugin-src PATH` — columns read off the plugin itself.** The generator
@@ -265,19 +267,19 @@ their `allowedTypes`, and synthesizes correctly-typed columns *named to match*.
 `pipeline.sh` passes this automatically, so a bare run always produces data
 the plugin can bind.
 
-For `sec-logo-bars`, whose panel declares `team` and `value`:
+For `brand-bars`, whose panel declares `brand` and `value`:
 
 ```sql
 SELECT
-  v.c1::varchar AS TEAM,
+  v.c1::varchar AS BRAND,
   v.c2::float AS VALUE
 FROM (VALUES
-  ('Team A', 4200.0),
-  ('Team B', 3283.0)
+  ('Brand A', 4200.0),
+  ('Brand B', 3283.0)
 ) AS v(c1, c2)
 ```
 
-...and the plugin config comes out as `{"team": "col-team", "value": "col-value"}`
+...and the plugin config comes out as `{"brand": "col-brand", "value": "col-value"}`
 with no `--label-key` needed. Every column binding the panel declares gets
 bound, so a plugin wanting lat/long/tooltip gets all three.
 

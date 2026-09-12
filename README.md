@@ -78,10 +78,14 @@ published as a `kind: "sql"` table element, so the data lives in the workbook
 spec with no upload and no data model.
 
 **There is no built-in row set on purpose.** Synthesized values are visible
-placeholders ("Team A", "Team B"): the shape is right, the meaning isn't. Pass
-`--data` with a `.csv`/`.tsv` or JSON array to supply rows that mean something
-for the plugin at hand. Or `--path DB SCHEMA TABLE` to bind a real warehouse
-table instead, grouped and auto-qualified.
+placeholders — each text column gets its binding name plus a letter, so a
+`brand` binding yields "Brand A", "Brand B". The shape is right, the meaning
+isn't. Pass `--data` with a `.csv`/`.tsv` or JSON array to supply rows that
+mean something for the plugin at hand, keeping them in the Plugs Electronics
+retail world rather than reaching for sports or teams. Or
+`--path DB SCHEMA TABLE` to bind a real warehouse table instead, grouped and
+auto-qualified — the known-good one is
+`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA`.
 
 This is the only API route for fabricated rows. Input tables can't be written
 from code — `insert-rows` is rejected, every row-ish field on the element is
