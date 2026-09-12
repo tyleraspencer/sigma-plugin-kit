@@ -283,7 +283,12 @@ if [ "$mode" = "redeploy" ]; then
   echo "  plugin:   $url" >&2
   echo "  pluginId: $pid" >&2
   if [ -n "$remembered_wb_url" ]; then
-    echo "  workbook: unchanged -- reload it to pick up the new bundle" >&2
+    # Nothing to publish on this path, and that is not a consolation prize:
+    # the workbook spec is untouched, so no new draft exists, and the iframe
+    # fetches the new bundle on its next load. A bundle-only change reaches
+    # viewers without anyone opening Sigma at all.
+    echo "  workbook: unchanged and already published -- it picks up the new" >&2
+    echo "            bundle on next load, with nothing to publish" >&2
     printf '%s\n' "$remembered_wb_url"
   else
     echo "  No workbook recorded for this plugin in this org." >&2
@@ -448,4 +453,20 @@ fi
 say "done"
 echo "  plugin:   $url" >&2
 echo "  pluginId: $pid" >&2
+
+# A spec write lands in the workbook's DRAFT. Sigma has no API to publish it:
+# PUT /v2/workbooks/{id}/spec takes `document` and an optional
+# `documentVersion` and nothing else, and there is no /publish route on
+# workbooks, files or documents (all 404, GET and POST). Publishing is a UI
+# action only. Confirmed against Sigma's own API reference, 2026-09-12.
+#
+# So the one thing this script CAN do is refuse to imply the job is finished.
+# Handing over a URL with no further comment is how a workbook gets shared
+# while still showing its old published version to everyone who opens it.
+if [ "$verb" != "none" ]; then
+  echo "" >&2
+  echo "  NOT PUBLISHED YET. The spec API writes the workbook's draft, and" >&2
+  echo "  Sigma exposes no API to publish it. Open the URL below and click" >&2
+  echo "  Publish, or whoever you send it to sees the previous version." >&2
+fi
 printf '%s\n' "$wb_url"
