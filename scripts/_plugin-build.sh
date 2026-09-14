@@ -44,6 +44,65 @@ print(h.hexdigest()[:16])
 PY
 }
 
+# plugin_version_assets <dist-dir>
+#
+# Rewrites dist/index.html's asset references from `./assets/index.js` to
+# `./assets/index.js?v=<content hash>`. The FILENAME stays stable; only the
+# reference carries the version.
+#
+# Both halves are load-bearing, and they fix opposite failures:
+#
+#   * Stable filename (vite.config.js) -- GitHub Pages serves index.html with
+#     `Cache-Control: max-age=600`, and a deploy replaces dist/assets
+#     wholesale. With a hashed name, a browser holding the previous index.html
+#     asks for a bundle that has just been deleted: 404, nothing mounts, an
+#     empty iframe and Sigma's loading bar spinning forever.
+#   * Versioned reference (here) -- with a stable name AND a stable reference,
+#     a browser that already has `assets/index.js` cached serves the OLD
+#     bundle from a NEW index.html for up to ten minutes. That is not a blank
+#     iframe; it is the previous build rendering as though the deploy never
+#     happened, which is worse, because it reads as a bug in the code you just
+#     wrote. It cost a debugging session on cohort-retention.
+#
+# Together the worst case becomes "index.html is up to ten minutes old, and
+# every byte it names is exactly the build it came from" -- consistent, never
+# a 404, and self-healing.
+#
+# Idempotent: an existing ?v= is stripped before the hash is recomputed, so
+# running this twice over one dist changes nothing.
+plugin_version_assets() {
+  "${SIGMA_PYTHON:-python3}" - "$1" <<'VERSION_ASSETS_PY' 2>/dev/null
+import hashlib, pathlib, re, sys
+
+dist = pathlib.Path(sys.argv[1])
+html = dist / "index.html"
+if not html.is_file():
+    sys.exit(0)
+text = html.read_text()
+
+PATTERN = re.compile(
+    r"""(?P<attr>src|href)=(?P<q>["'])(?P<ref>\.?/?assets/[^"']+)(?P=q)""")
+
+
+def stamp(m):
+    bare = m.group("ref").split("?", 1)[0]
+    target = dist / bare.lstrip("./")
+    if not target.is_file():
+        # Leave a reference we cannot resolve exactly as the build wrote it.
+        # Inventing a version for a file that is not there would turn a
+        # missing asset into a 404 with a query string on the end.
+        return m.group(0)
+    v = hashlib.sha256(target.read_bytes()).hexdigest()[:8]
+    q = m.group("q")
+    return "%s=%s%s?v=%s%s" % (m.group("attr"), q, bare, v, q)
+
+
+out = PATTERN.sub(stamp, text)
+if out != text:
+    html.write_text(out)
+VERSION_ASSETS_PY
+}
+
 # Where the last successful build's source hash is recorded. Kept in the cache
 # rather than in the plugin directory on purpose: plugin_source_hash walks that
 # directory, so a stamp living inside it would change the hash it is stamping.
@@ -70,6 +129,11 @@ plugin_build_if_stale() {
   if [ -z "${SIGMA_FORCE_BUILD:-}" ] && [ -f "$src/dist/index.html" ] \
      && [ -n "$src_hash" ] && [ -f "$stamp" ] \
      && [ "$(cat "$stamp" 2>/dev/null)" = "$src_hash" ]; then
+    # Also on the skip path, so the invariant is "every dist this function
+    # returns 0 for has versioned references" no matter which branch got
+    # there. It is one hash of one file, and it is what brings a dist built
+    # before plugin_version_assets existed up to date without a rebuild.
+    plugin_version_assets "$src/dist"
     echo "  dist/ is current for $name -- skipped the build." >&2
     return 0
   fi
@@ -103,6 +167,11 @@ plugin_build_if_stale() {
 
   [ -f "$src/dist/index.html" ] || {
     echo "plugin-build: build produced no dist/index.html." >&2; return 1; }
+
+  # Version the asset references before anything else reads this dist/. The
+  # bind harness and the deploy consume exactly these bytes, and a dist that
+  # gets versioned only on the deploy path is a dist the harness never tested.
+  plugin_version_assets "$src/dist"
 
   # Stamped only after a build that actually produced a bundle, so a failed
   # build can never leave a stamp claiming the dist is current.
