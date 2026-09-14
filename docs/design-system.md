@@ -46,10 +46,22 @@ const T = {
   The neutrals and the semantic pair stay. A plugin wearing someone's full brand
   palette stops reading as part of the workbook — and the neutrals are what make
   dense data legible, not brand expression.
-- **Don't paint a card.** The workbook already drew one: the element sits in a
-  white surface with its own border and radius. A plugin that renders its own
-  white rounded panel produces a card inside a card. Default the root to
-  transparent, and honor `client.style.backgroundColor` when it's set.
+- **Paint the surface, not a card.** An element hosting a plugin is *not* given
+  the white surface a table or a chart sits on — the iframe is transparent over
+  the page canvas, so an unpainted root lets the editor's grid guides show
+  straight through the chart and leaves the plugin as the one element on the
+  page not sitting on anything. Fill the root with
+  `client.style.backgroundColor` when the author has set one and `T.card`
+  otherwise; that is what makes it match the elements around it. What stays
+  banned is the *card*: no second border, no radius, no shadow, no inset panel
+  — that is the card-inside-a-card, and it is the decoration, not the fill.
+
+  > Corrected 2026-09-14. This bullet used to say the opposite — "the workbook
+  > already drew one, default the root to transparent" — which was assumed
+  > rather than checked, and was wrong. It cost a round trip on
+  > `plugins/cohort-retention`, where the workbook's grid guides were visible
+  > through the heatmap. Painting the fill is safe in both worlds: if Sigma
+  > ever does draw the surface, white on white is a no-op.
 - `warn` is genuinely spare. Three semantic colors in one small chart is noise.
 
 ## Type
@@ -204,6 +216,7 @@ Before a plugin ships, walk it:
   native.
 - The five principles and the color/typography guidance are Sigma's product
   design principles (`sigma-design-principles`).
-- Neither one knows about iframes; the plugin-specific consequences above — no
-  card inside a card, no duplicate title, no theme API, panel fields instead of
-  in-plugin settings — are this kit's.
+- Neither one knows about iframes; the plugin-specific consequences above —
+  paint the surface but not a card, no duplicate title, no theme API, panel
+  fields instead of in-plugin settings — are this kit's, and are what an
+  iframe actually gets rather than what it ought to.

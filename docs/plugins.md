@@ -188,9 +188,17 @@ So the build stamps the reference instead of the file:
 ```
 
 `plugin_version_assets` in `scripts/_plugin-build.sh` does this after every
-build (and on the skipped-build path, so an older `dist/` is brought up to date
-without a rebuild). It is idempotent, and it leaves a reference it cannot
-resolve on disk exactly as the build wrote it. `assets_match` in
+build *through the pipeline* — and on the skipped-build path too, so an older
+`dist/` is brought up to date without a rebuild. It is idempotent, and it
+leaves a reference it cannot resolve on disk exactly as the build wrote it.
+
+It lives in the shell helper rather than in `vite.config.js` deliberately:
+`vite.config.js` is copied into each plugin at scaffold time, so a config-based
+version would only ever reach *new* plugins, while the helper reaches every
+existing one immediately. The trade is that a bare `npm run build` inside a
+plugin directory produces an unversioned `index.html` — harmless, because
+`deploy-plugin.sh` routes through the helper on every path and re-stamps
+before it pushes. `assets_match` in
 `deploy-plugin.sh` fetches the reference **with** its query — the URL the
 iframe will actually request — and strips the query to find the local file to
 compare against.
