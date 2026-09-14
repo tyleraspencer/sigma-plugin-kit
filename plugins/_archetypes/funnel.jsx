@@ -30,7 +30,13 @@ client.config.configureEditorPanel([
   { type: 'toggle', name: 'showDropoff', source: 'Style', defaultValue: true },
   { type: 'toggle', name: 'taper', source: 'Style', defaultValue: true },
 
-  { type: 'variable', name: 'selected', allowedTypes: ['text'] },
+  // 'text-list' is a LIST control (what a plugin writes a selection into);
+  // plain 'text' is a text INPUT box. ControlType names the control's kind,
+  // not its selection mode, so a single-select list is still 'text-list'.
+  // Declaring ['text'] here makes Sigma render "Invalid selection" in the
+  // panel -- on a binding that otherwise works, because the spec binds by
+  // controlId and bypasses the panel's picker.
+  { type: 'variable', name: 'selected', allowedTypes: ['text-list'] },
 ]);
 
 const DEMO = [
@@ -53,8 +59,12 @@ export default function App() {
   const [variable, setVariable] = useVariable(config.selected);
   const [, setLoading] = useLoadingState(true);
 
-  // The CURRENT value of a variable lives at .defaultValue.value.
-  const selected = variable?.defaultValue?.value ?? null;
+  // The CURRENT value of a variable lives at .defaultValue.value. A list
+  // control's value is an ARRAY, so take the first entry -- this highlights
+  // one item. Comparing the raw value works by accident for a single
+  // selection (String(['A']) === 'A') and matches nothing once there are two.
+  const rawSelected = variable?.defaultValue?.value ?? null;
+  const selected = Array.isArray(rawSelected) ? (rawSelected[0] ?? null) : rawSelected;
 
   const rows = useMemo(() => {
     const labels = sigmaData?.[config.label];

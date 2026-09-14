@@ -600,13 +600,37 @@ def main():
                              "are in the warehouse, so pass --control-values FILE "
                              "(one value per line).")
         if panel_entries:
-            declared = [e["name"] for e in panel_entries if e["type"] == "variable"]
+            var_entries = [e for e in panel_entries if e["type"] == "variable"]
+            declared = [e["name"] for e in var_entries]
             if binding not in declared:
                 raise SystemExit(
                     "build-plugin-workbook: the plugin declares no `variable` entry "
                     "named %r.\n  Declared: %s\n  The name must match the plugin's "
                     "configureEditorPanel exactly, or the binding is silently absent."
                     % (binding, ", ".join(declared) or "(none)"))
+            # This script only ever emits a LIST control (controlType "list",
+            # valueType "text"), whose ControlType is 'text-list'. A `variable`
+            # entry's allowedTypes is an allowlist over ControlTypes, and
+            # 'text' is a text INPUT box, not a single-select list -- the name
+            # describes the control's kind, not its selection mode. So an
+            # allowlist without 'text-list' is always wrong here.
+            #
+            # It is worth failing the build over because the symptom is so
+            # weak: Sigma shows "Invalid selection" for that binding in the
+            # editor panel and the plugin goes on working, since the spec
+            # binds by controlId and never consults the panel's picker. A red
+            # warning on a correct-looking plugin trains you to ignore
+            # warnings. The shipped template declared ['text'] for months.
+            allowed = next((e.get("allowedTypes") for e in var_entries
+                            if e["name"] == binding), None)
+            if allowed and "text-list" not in allowed:
+                raise SystemExit(
+                    "build-plugin-workbook: the plugin's `variable` entry %r allows "
+                    "%s, but this builds a text LIST control ('text-list').\n"
+                    "  Sigma will show \"Invalid selection\" for that binding in the "
+                    "editor panel -- while the plugin still works.\n"
+                    "  Fix the plugin: allowedTypes: ['text-list']."
+                    % (binding, ", ".join(repr(a) for a in allowed)))
         if args.control_values:
             with open(args.control_values, encoding="utf-8-sig") as fh:
                 values = [ln.strip() for ln in fh if ln.strip()]

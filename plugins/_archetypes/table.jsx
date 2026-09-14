@@ -30,7 +30,13 @@ client.config.configureEditorPanel([
     values: ['Value, high to low', 'Value, low to high', 'Label A-Z'],
     defaultValue: 'Value, high to low' },
 
-  { type: 'variable', name: 'selected', allowedTypes: ['text'] },
+  // 'text-list' is a LIST control (what a plugin writes a selection into);
+  // plain 'text' is a text INPUT box. ControlType names the control's kind,
+  // not its selection mode, so a single-select list is still 'text-list'.
+  // Declaring ['text'] here makes Sigma render "Invalid selection" in the
+  // panel -- on a binding that otherwise works, because the spec binds by
+  // controlId and bypasses the panel's picker.
+  { type: 'variable', name: 'selected', allowedTypes: ['text-list'] },
 ]);
 
 const DEMO = [
@@ -58,7 +64,13 @@ export default function App() {
 
   // The CURRENT value of a variable lives at .defaultValue.value, despite the
   // name. Reading `.value` gets you undefined.
-  const selected = variable?.defaultValue?.value ?? null;
+  //
+  // A list control's value is an ARRAY. Take the first entry: this plugin
+  // highlights one bar. Comparing the raw value used to work by accident --
+  // String(['Samsung']) === 'Samsung' -- and then quietly matched nothing the
+  // moment a second value arrived, since String(['A','B']) is 'A,B'.
+  const rawSelected = variable?.defaultValue?.value ?? null;
+  const selected = Array.isArray(rawSelected) ? (rawSelected[0] ?? null) : rawSelected;
 
   const rows = useMemo(() => {
     const labels = sigmaData?.[config.label];
