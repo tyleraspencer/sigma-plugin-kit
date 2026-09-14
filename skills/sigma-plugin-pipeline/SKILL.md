@@ -170,8 +170,55 @@ link: *"open it and click Publish."* When it didn't — a `--redeploy`, or a
 spec that didn't change — nothing is pending and there is nothing to mention.
 → `docs/plugins.md` → "A published workbook needs a human"
 
+The publish note goes *with* the workbook link, in the handoff shape below.
+
 Run the four steps by hand only when something fails. They're in
 `docs/plugins.md`, along with the SDK reference and every gotcha.
+
+## How to report a finished build
+
+When the chain finishes, the user is looking for four links and almost nothing
+else. They already watched the pipeline scroll past, so a retelling of it is
+noise — and the links are what they actually have to click next.
+
+**Two or three sentences, then the list.** The prose says what the plugin is
+and what it shows; that's all. No step-by-step of the seven pipeline stages, no
+inventory of files touched, no recap of the gates — the gates passed or you
+wouldn't be delivering. Save the long version for when something went wrong.
+
+Then exactly these four, in this order:
+
+1. **Code** — `https://github.com/<host-repo>/tree/main/plugins/<name>`
+   (`tyleraspencer/sigma-plugins` unless `SIGMA_PLUGIN_HOST_REPO` says
+   otherwise). That folder holds the *built* bundle; the editable source is
+   gitignored and local, so name that path too — `plugins/<name>/src/App.jsx`.
+2. **Deployed plugin** — the Pages URL, which is the `plugin:` line
+   `pipeline.sh` prints at the end and the `plugin_url` in its state file:
+   `https://<owner>.github.io/<repo>/plugins/<name>/index.html`.
+3. **Data** — one phrase, not a paragraph. Synthetic: what the rows *are*
+   ("18 synthetic rows, Plugs brands × quarterly revenue"). Real table: the
+   three-part path you bound.
+4. **Workbook, in edit mode** — the one that matters most, and last so it sits
+   closest to the user's cursor:
+   `https://app.sigmacomputing.com/<org>/workbook/<id>/edit`
+
+### Getting the edit URL right
+
+`pipeline.sh` prints the workbook URL as its **last line of stdout** — already
+`https://app.sigmacomputing.com/<org>/workbook/<id>` — and caches it as
+`workbook_url` in
+`~/.cache/sigma-plugin-kit/deploys/<host-slug>__<name>.env`. Append `/edit` to
+that string and you are done.
+
+**Don't assemble it from the `workbookId`.** The id in the URL is Sigma's
+short document id (`7EW5xMZojxSqmgyR7JmEdi`), not the UUID the publish
+response returns; a URL built from the UUID 404s. If for some reason you don't
+have the printed URL, get it from `publish-workbook.sh get-meta <id>` and take
+its `url` field rather than composing one.
+
+Edit mode, not view mode, because the first thing the user has to do is click
+Publish — and the second is usually move the element or tweak the panel. A
+view-mode link makes them find the editor themselves.
 
 ## Editing after the first build
 
