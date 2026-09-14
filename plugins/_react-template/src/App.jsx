@@ -5,12 +5,14 @@ import {
   useElementData,
   useVariable,
   useLoadingState,
+  usePluginStyle,
 } from '@sigmacomputing/plugin';
 
 // Sigma design tokens -- docs/design-system.md. A plugin reads as another
 // Sigma element only when it uses these; no loose hex below this line. Brand
 // colors replace `accent` and its tints only -- the neutrals never move.
 const T = {
+  card: '#ffffff',
   ink: '#0f172a', body: '#475569', muted: '#7c8698', hairline: '#e5e8ef',
   accent: '#274690', accentTint: '#eaf0fb', accentEdge: '#d8e0f8',
   good: '#0f8a5f', bad: '#b42318', warn: '#b45309', warnTint: '#fdf1e3',
@@ -70,6 +72,12 @@ export default function App() {
 
   const [variable, setVariable] = useVariable(config.selected);
   const [, setLoading] = useLoadingState(true);
+  // Fill the root. An element hosting a plugin is NOT given the white surface
+  // a table or a chart sits on -- the iframe is transparent over the page
+  // canvas, so an unpainted root lets the editor's grid guides show through
+  // the chart. `backgroundColor` is the only property client.style carries.
+  // Filling is not the same as drawing a card: no border, radius or shadow.
+  const surface = usePluginStyle()?.backgroundColor || T.card;
 
   // The CURRENT value of a variable lives at .defaultValue.value, despite the
   // name. Reading `.value` gets you undefined.
@@ -147,7 +155,7 @@ export default function App() {
 
   if (!sorted.length) {
     return (
-      <div style={S.hint}>
+      <div style={{ ...S.hint, background: surface }}>
         {client.sigmaEnv === 'author'
           ? 'Bind an element, a label column and a value column in the editor panel.'
           : 'No data to display.'}
@@ -156,7 +164,7 @@ export default function App() {
   }
 
   return (
-    <div ref={wrapRef} style={S.wrap}>
+    <div ref={wrapRef} style={{ ...S.wrap, background: surface }}>
       <div style={S.top}>
         <div style={S.title}>__PLUGIN_TITLE__</div>
         {isDemo && <div style={S.badge}>demo data</div>}
