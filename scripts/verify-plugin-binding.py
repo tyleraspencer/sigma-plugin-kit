@@ -135,6 +135,10 @@ PAGE = r"""<!doctype html>
     { key:'B', el:document.getElementById('fb'), cfg:P.cfg,        sawInit:false, sawSub:false }
   ];
 
+  // Delays for the post-init config re-broadcast above. The last one lands
+  // well inside the settle loop's window (4 stable 120ms ticks, 7.2s cap).
+  var CONFIG_REBROADCAST_MS = [60, 180, 400, 800];
+
   function send(f, type, result){
     try { f.el.contentWindow.postMessage({ type:type, result:result }, '*'); } catch(e){}
   }
@@ -151,6 +155,27 @@ PAGE = r"""<!doctype html>
       f.sawInit = true;
       // Merged into the plugin's state, then re-broadcast as `config`.
       send(f, t, { id:'plugin-1', sigmaEnv:'author', screenshot:false, config:f.cfg });
+      // Then again on the SDK's own config channel, because the init reply is
+      // emitted ONCE and never replayed. initialize() resolves the init
+      // promise and immediately does emit('config', ...), while useConfig only
+      // subscribes when React runs its mount effect. On a cold load -- the
+      // first build, the run that matters -- the reply wins that race, the
+      // subscription misses the only emit it will ever get, and the plugin
+      // renders fallback data forever. That FAIL is indistinguishable from a
+      // genuinely unbound plugin, so it reads as the gate working. Real Sigma
+      // re-broadcasts config on every panel change, so it self-heals there and
+      // only the harness stays stuck; wb:plugin:config:update IS that same
+      // host->plugin channel. Payload is pluginConfig-shaped ({config: ...}),
+      // not the bare config -- the SDK Object.assigns it onto pluginConfig.
+      // Re-sending is inert: f.cfg keeps its identity, so setConfig gets the
+      // same reference and React bails out of the re-render.
+      for (var d = 0; d < CONFIG_REBROADCAST_MS.length; d++){
+        (function(frame, ms){
+          setTimeout(function(){
+            send(frame, 'wb:plugin:config:update', { config:frame.cfg });
+          }, ms);
+        })(f, CONFIG_REBROADCAST_MS[d]);
+      }
       return;
     }
     if (t === 'wb:plugin:element:subscribe:data'){
