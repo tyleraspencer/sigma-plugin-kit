@@ -77,19 +77,29 @@ stamp_file="$state_dir/${host_slug}__${name}.srchash"
 #
 # Both the short circuit and the post-push poll need this, and they must not
 # disagree about what "deployed" means -- so it exists once. Matching
-# index.html is NOT sufficient on its own: asset names are deliberately stable
-# (see vite.config.js), so index.html is byte-identical across builds and would
-# pass instantly while Pages still served the previous bundle.
+# index.html is NOT sufficient on its own. Asset FILENAMES are deliberately
+# stable (see vite.config.js), so before the reference carried a ?v= the whole
+# file was byte-identical across builds and would pass instantly while Pages
+# still served the previous bundle. It now changes whenever the bundle does,
+# but the check stays: a matching index.html still says nothing about whether
+# the bytes it names are reachable.
+#
+# `ref` here is the reference as the BROWSER will request it, query and all --
+# `assets/index.js?v=1a2b3c4d` (see plugin_version_assets in
+# scripts/_plugin-build.sh). Fetch that exact string, so the URL Sigma's iframe
+# asks for is the URL this proves serves; strip the query to find the file on
+# disk to compare it against.
 assets_match() {
-  local dist="$1" base="$2" ref got acode clen missing=""
-  for ref in $(grep -o 'assets/[^"]*' "$dist/index.html" | sort -u); do
+  local dist="$1" base="$2" ref bare got acode clen missing=""
+  for ref in $(grep -o "assets/[^\"']*" "$dist/index.html" | sort -u); do
+    bare="${ref%%\?*}"
     # Cheap prefilter: a length mismatch is a definite miss, and skipping the
     # body saves re-downloading a multi-megabyte bundle on every attempt.
     clen=$(curl -sSLI --connect-timeout 5 --max-time 15 "$base/$ref" 2>/dev/null \
              | tr -d '\r' | awk 'tolower($1)=="content-length:"{v=$2} END{print v+0}')
-    if [ "${clen:-0}" -gt 0 ] && [ -f "$dist/$ref" ]; then
+    if [ "${clen:-0}" -gt 0 ] && [ -f "$dist/$bare" ]; then
       local local_len
-      local_len=$(wc -c < "$dist/$ref" | tr -d ' ')
+      local_len=$(wc -c < "$dist/$bare" | tr -d ' ')
       if [ "$clen" != "$local_len" ]; then
         missing="$missing $ref(len $clen!=$local_len)"
         continue
@@ -100,7 +110,7 @@ assets_match() {
               -w '%{http_code}' "$base/$ref" 2>/dev/null || echo 000)
     if [ "$acode" != "200" ]; then
       missing="$missing $ref($acode)"
-    elif ! cmp -s "$got" "$dist/$ref"; then
+    elif ! cmp -s "$got" "$dist/$bare"; then
       missing="$missing $ref(stale)"
     fi
     rm -f "$got"

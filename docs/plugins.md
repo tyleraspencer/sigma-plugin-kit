@@ -171,6 +171,40 @@ Two hard requirements, both enforced by the script:
 A first Pages build routinely takes 30–60s and a brand-new path 404s until it
 lands, so the script polls rather than trusting the push.
 
+### Why a deploy can look like it never happened
+
+Pages serves both `index.html` and the bundle with `Cache-Control: max-age=600`,
+and plugin assets are **not** content-hashed (`vite.config.js` explains why: a
+hashed name 404s out of a cached `index.html` after a deploy replaces
+`dist/assets`). With a stable filename *and* a stable reference, a browser that
+already has `assets/index.js` cached renders the previous build from a fresh
+`index.html` for up to ten minutes — not a blank iframe, but the old plugin,
+looking exactly like a deploy that silently failed.
+
+So the build stamps the reference instead of the file:
+
+```html
+<script type="module" src="./assets/index.js?v=1a2b3c4d"></script>
+```
+
+`plugin_version_assets` in `scripts/_plugin-build.sh` does this after every
+build (and on the skipped-build path, so an older `dist/` is brought up to date
+without a rebuild). It is idempotent, and it leaves a reference it cannot
+resolve on disk exactly as the build wrote it. `assets_match` in
+`deploy-plugin.sh` fetches the reference **with** its query — the URL the
+iframe will actually request — and strips the query to find the local file to
+compare against.
+
+The worst case is now "an `index.html` up to ten minutes old, naming bytes that
+are exactly the build it came from": consistent, never a 404, self-healing.
+Only `index.html` itself can be stale, and it expires on its own.
+
+**If you are staring at an old build right now**, that ten minutes is the
+answer. A hard reload of the *workbook* does not fix it — Sigma creates the
+plugin iframe from JavaScript, and a script-inserted iframe issues an ordinary
+fetch that does not inherit the reload's cache-bypass. Open the plugin URL as a
+top-level page, hard-reload that, then reload the workbook.
+
 ## 3. Register
 
 ```bash
