@@ -343,6 +343,34 @@ manual fix for a workbook built before this was handled.
 `--data` rows are pre-aggregated (one row per category) so they produce no
 grouping, and no `groupingId` — correct, and the check stays quiet.
 
+#### Why the bundle is built at step 3, not step 4
+
+The bind harness drives the **built** bundle, because that is what Sigma
+loads. The only `npm run build` used to live inside `deploy-plugin.sh` at step
+4, one step after the harness — so on a *first* build step 3 found no `dist/`,
+printed "build it first" and no-opped past a `|| true`. The gate that proves a
+plugin renders bound rather than fallback data never ran on the one run where
+the plugin was new, which is the run where it matters.
+
+`scripts/_plugin-build.sh` now owns building, and both steps call it. It is
+content-addressed against the plugin's sources (`dist/`, `node_modules/` and
+`.git/` excluded, since they are outputs), so:
+
+- **step 3** builds when there is no `dist/`, or when the sources changed
+  since the one that is there. A stale `dist/` is worse than a missing one —
+  every downstream check then passes against code nobody edited.
+- **step 4** is handed the same hash and finds the work already done, so a
+  run costs one build, not two. `SIGMA_FORCE_BUILD=1` overrides.
+- a build that **fails** writes no stamp, so the next run rebuilds rather than
+  trusting the previous bundle.
+
+One subtlety worth keeping: `plugin_build_if_stale` checks `npm run build`'s
+exit status explicitly instead of relying on `set -e`. Callers invoke it
+inside an `if`, and errexit is suppressed for everything in a function called
+that way — without the explicit check a failed build falls through to the
+`dist/index.html` guard, finds the *previous* build's file, and stamps it as
+current.
+
 #### A published workbook needs a human
 
 **The spec API writes the workbook's draft, not its published version.** POST

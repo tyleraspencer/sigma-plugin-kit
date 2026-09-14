@@ -10,7 +10,7 @@
 # Steps, in the only order that works:
 #   1. scaffold plugins/<plugin-name>/ if it does not exist yet
 #   2. preflight: static checks for the silent failure modes (BLOCKING)
-#   3. generate the local bind harness and print its URL
+#   3. build the bundle, then generate the local bind harness and print its URL
 #   4. deploy it to the public Pages host and wait until it serves
 #   5. register it (or reuse an existing registration by name)
 #   6. generate a workbook spec bound to real data and publish it
@@ -62,6 +62,11 @@ usage() { sed -n '2,/^set -/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+
+# plugin_build_if_stale: the bind harness at step 3 needs the same dist/ that
+# deploy ships at step 4, so one function owns building it.
+# shellcheck source=scripts/_plugin-build.sh
+. "$repo_root/scripts/_plugin-build.sh"
 
 : "${SIGMA_BASE_URL:=https://api.sigmacomputing.com}"
 export SIGMA_BASE_URL
@@ -198,12 +203,30 @@ fi
 # local page that runs the plugin twice -- unbound and bound -- and compares
 # the two renders. It needs a browser, so the pipeline generates it and
 # prints the URL rather than asserting; open it before trusting step 7.
+#
+# The build has to happen HERE, not at step 4. The harness drives the built
+# bundle, because that is what Sigma loads -- and the only build used to live
+# inside deploy. So on a first build this step found no dist/, printed "build
+# it first" and no-opped, past a `|| true`: the one gate that proves a plugin
+# renders bound data never ran on the one run where the plugin was new.
+# Building here costs nothing at step 4, which stamps the source hash and
+# skips a build it has already done.
 say "3/$total bind harness"
 if [ -n "${SIGMA_SKIP_BINDTEST:-}" ]; then
   echo "  SIGMA_SKIP_BINDTEST set -- skipped" >&2
 else
-  "${SIGMA_PYTHON:-python3}" scripts/verify-plugin-binding.py "$name" \
-    ${data_file:+--data "$data_file"} >&2 || true
+  # A build failure is not fatal here on purpose -- step 4 calls the same
+  # function and fails on it properly, with deploy's own diagnostics.
+  # Computed once here and handed to deploy below, the same way preflight is:
+  # hashing the source tree twice per run was most of what this step added to
+  # an unchanged re-run, and nothing touches the plugin between the two.
+  src_hash="$(plugin_source_hash "$repo_root/plugins/$name")"
+  if plugin_build_if_stale "$repo_root/plugins/$name" "$name" "$src_hash"; then
+    "${SIGMA_PYTHON:-python3}" scripts/verify-plugin-binding.py "$name" \
+      ${data_file:+--data "$data_file"} >&2 || true
+  else
+    echo "  build failed -- skipping the harness; step 4 reports why." >&2
+  fi
 fi
 
 # --- 4. deploy ------------------------------------------------------------
@@ -211,7 +234,8 @@ fi
 # callable on its own and that is exactly how a broken plugin shipped once.
 # Step 2 just ran the full one, with --data, so tell it not to repeat itself.
 say "4/$total deploy"
-url="$(SIGMA_PREFLIGHT_DONE=1 bash scripts/deploy-plugin.sh "$name")"
+url="$(SIGMA_PREFLIGHT_DONE=1 SIGMA_PLUGIN_SRC_HASH="${src_hash:-}" \
+       bash scripts/deploy-plugin.sh "$name")"
 echo "  $url" >&2
 
 # --- 5. register (reuse if present) ---------------------------------------

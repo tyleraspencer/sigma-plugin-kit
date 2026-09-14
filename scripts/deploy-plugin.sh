@@ -67,30 +67,10 @@ state_dir="${SIGMA_PLUGIN_KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sigma-plugi
 host_slug="$(printf '%s' "$HOST_REPO" | sed 's#[^a-zA-Z0-9]#-#g')"
 stamp_file="$state_dir/${host_slug}__${name}.srchash"
 
-# Hash of everything that can change the built bundle. dist/ and node_modules
-# are excluded deliberately -- they are outputs, and node_modules is shared by
-# hard link with other plugins.
-plugin_source_hash() {
-  "${SIGMA_PYTHON:-python3}" - "$1" <<'PY' 2>/dev/null
-import hashlib, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-h = hashlib.sha256()
-paths = []
-for p in sorted(root.rglob("*")):
-    rel = p.relative_to(root)
-    parts = rel.parts
-    if parts and parts[0] in ("node_modules", "dist", ".git"):
-        continue
-    if p.is_file():
-        paths.append((str(rel).replace("\\", "/"), p))
-for rel, p in paths:
-    h.update(rel.encode())
-    h.update(b"\0")
-    h.update(p.read_bytes())
-    h.update(b"\0")
-print(h.hexdigest()[:16])
-PY
-}
+# plugin_source_hash and plugin_build_if_stale. Shared with pipeline.sh, whose
+# bind harness needs the same dist/ this ships -- see scripts/_plugin-build.sh.
+# shellcheck source=scripts/_plugin-build.sh
+. "$repo_root/scripts/_plugin-build.sh"
 
 # assets_match <dist-dir> <base-url>; 0 when every asset index.html names is
 # served AND matches the local build byte for byte.
@@ -182,7 +162,10 @@ fi
 # --- Nothing changed? Then nothing to do. ---------------------------------
 # Checked after the static gates (so a broken plugin still gets caught) and
 # before npm, the clone and the push (which are the expensive parts).
-src_hash="$(plugin_source_hash "$src")"
+# pipeline.sh already hashed this tree at step 3 to decide whether to build.
+# Recomputing it here would walk every source file a second time for the same
+# answer; the handoff is scoped to that one call, like SIGMA_PREFLIGHT_DONE.
+src_hash="${SIGMA_PLUGIN_SRC_HASH:-$(plugin_source_hash "$src")}"
 if [ -z "${SIGMA_FORCE_DEPLOY:-}" ] && [ -n "$src_hash" ] \
    && [ -f "$stamp_file" ] && [ "$(cat "$stamp_file" 2>/dev/null)" = "$src_hash" ] \
    && [ -f "$src/dist/index.html" ]; then
@@ -199,30 +182,14 @@ if [ -z "${SIGMA_FORCE_DEPLOY:-}" ] && [ -n "$src_hash" ] \
   rm -f "$served"
 fi
 
-# shellcheck source=scripts/_deps-cache.sh
-. "$repo_root/scripts/_deps-cache.sh"
-dep_key="$(deps_cache_key "$src" || true)"
-
-if [ ! -d "$src/node_modules" ]; then
-  if [ -n "$dep_key" ] && deps_cache_link "$dep_key" "$src/node_modules"; then
-    echo "Linked dependencies for $name from the shared store." >&2
-  else
-    echo "Installing dependencies for $name ..." >&2
-    ( cd "$src" && { [ -f package-lock.json ] && npm ci --silent || npm install --silent; } ) >&2
-  fi
-fi
-# Populate the store from the first plugin that installs this dependency set,
-# so the next scaffold with the same deps links instead of installing.
-if [ -n "$dep_key" ] && [ -d "$src/node_modules" ]; then
-  deps_cache_save "$dep_key" "$src/node_modules" || true
-fi
-
-echo "Building $name ..." >&2
-( cd "$src" && npm run build --silent ) >&2
+# Usually a no-op by the time we get here: pipeline.sh builds at step 3 so the
+# bind harness has a bundle to drive, and the stamp means this call sees the
+# work is already done. Still called unconditionally, because deploy-plugin.sh
+# is independently runnable and that is exactly how a plugin once shipped
+# without its build.
+plugin_build_if_stale "$src" "$name" "$src_hash" || exit 1
 
 publish_dir="$src/dist"
-[ -f "$publish_dir/index.html" ] || {
-  echo "deploy-plugin: build produced no dist/index.html." >&2; exit 1; }
 
 # The failure this catches is invisible: with Vite's default `base: '/'` the
 # built page references /assets/index-xxx.js, which 404s under the Pages
