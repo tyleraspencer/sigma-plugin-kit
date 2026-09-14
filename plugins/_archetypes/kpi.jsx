@@ -13,6 +13,16 @@ import {
   useLoadingState,
 } from '@sigmacomputing/plugin';
 
+// Sigma design tokens -- docs/design-system.md. A plugin reads as another
+// Sigma element only when it uses these; no loose hex below this line. Brand
+// colors replace `accent` and its tints only -- the neutrals never move.
+const T = {
+  ink: '#0f172a', body: '#475569', muted: '#7c8698', hairline: '#e5e8ef',
+  accent: '#274690', accentTint: '#eaf0fb', accentEdge: '#d8e0f8',
+  good: '#0f8a5f', bad: '#b42318', warn: '#b45309', warnTint: '#fdf1e3',
+  context: '#cbd5e1',
+};
+
 // The first two `column` entries are the label and the value IN THIS ORDER --
 // build-plugin-workbook.py binds them positionally.
 client.config.configureEditorPanel([
@@ -112,7 +122,7 @@ export default function App() {
   }, [data, config.sort]);
 
   const total = sorted.reduce((s, r) => s + r.value, 0) || 1;
-  const accent = config.accent || '#2563eb';
+  const accent = config.accent || T.accent;
   const unit = config.unit || '';
 
   // Width is 0 at first paint. Fall back to a single column rather than
@@ -154,7 +164,7 @@ export default function App() {
               onClick={() => pick(r.label)}
               style={{
                 ...S.tile,
-                borderColor: isSel ? accent : '#e5e7eb',
+                borderColor: isSel ? accent : T.hairline,
                 opacity: selected != null && !isSel ? 0.45 : 1,
               }}
             >
@@ -181,23 +191,23 @@ export default function App() {
 const S = {
   wrap: { height: '100%', display: 'flex', flexDirection: 'column', padding: '12px 16px', gap: 10 },
   top: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: '0 0 auto' },
-  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: '#374151' },
+  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: T.body },
   badge: { fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
-           padding: '2px 6px', borderRadius: 3, background: '#fef3c7', color: '#92400e' },
+           padding: '2px 6px', borderRadius: 3, background: T.warnTint, color: T.warn },
   // minHeight 0 lets this scroll instead of pushing the plugin past the frame.
   grid: { flex: 1, minHeight: 0, display: 'grid', gap: 10, alignContent: 'start', overflowY: 'auto' },
-  tile: { border: '1px solid #e5e7eb', borderRadius: 6, padding: '10px 12px',
+  tile: { border: `1px solid ${T.hairline}`, borderRadius: 6, padding: '10px 12px',
           display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer',
           transition: 'opacity .2s ease, border-color .2s ease' },
   // Deliberately NOT uppercased: this is data, not chrome. Brand and SKU names
   // carry their own casing ("JBL", "iPhone") and forcing a case throws it away.
-  label: { fontSize: 10, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden',
+  label: { fontSize: 10, color: T.body, whiteSpace: 'nowrap', overflow: 'hidden',
            textOverflow: 'ellipsis', letterSpacing: '.04em' },
-  value: { fontWeight: 700, color: '#111827', fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 },
-  unit: { fontSize: '.5em', fontWeight: 600, color: '#6b7280', marginLeft: 3 },
-  track: { background: '#f3f4f6', borderRadius: 2, height: 4, overflow: 'hidden', marginTop: 2 },
+  value: { fontWeight: 700, color: T.ink, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 },
+  unit: { fontSize: '.5em', fontWeight: 600, color: T.muted, marginLeft: 3 },
+  track: { background: T.hairline, borderRadius: 2, height: 4, overflow: 'hidden', marginTop: 2 },
   fill: { height: '100%', borderRadius: 2, transition: 'width .25s ease' },
-  share: { fontSize: 9, color: '#9ca3af', fontVariantNumeric: 'tabular-nums' },
+  share: { fontSize: 9, color: T.muted, fontVariantNumeric: 'tabular-nums' },
   hint: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          textAlign: 'center', fontSize: 11, color: '#9ca3af', padding: '0 24px', lineHeight: 1.6 },
+          textAlign: 'center', fontSize: 11, color: T.muted, padding: '0 24px', lineHeight: 1.6 },
 };

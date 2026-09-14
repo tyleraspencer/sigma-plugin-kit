@@ -110,6 +110,12 @@ editor-panel types, the client surface, variables, actions, interactions, and
 the help centre's own errors. Read it instead of the help pages, which cover
 about a third of the API and get several details wrong.
 
+**[docs/design-system.md](docs/design-system.md)** is the visual counterpart —
+Sigma's own tokens, type scale and chart conventions, plus the five product
+design principles restated as decisions you make in `App.jsx`. A plugin either
+reads as another Sigma element or it reads as something embedded, and there is
+no theme API to borrow the answer from: `client.style` exposes one property.
+
 Pipeline walkthrough and every gotcha that costs a rebuild:
 **[docs/plugins.md](docs/plugins.md)**. Verified workbook element shapes to
 copy from rather than invent:
@@ -216,6 +222,7 @@ skills/
   sigma-plugin-pipeline/      the operating manual
 docs/
   plugin-api.md               THE SDK reference: 14 panel types, client, variables, actions
+  design-system.md            how a React plugin looks native: tokens, charts, principles
   plugins.md                  the pipeline, archetypes, every gotcha
   elements-known-good.md      verified element shapes -- copy, don't invent
   auth.md                     auth ladder, credential tiers, Cowork, egress hosts

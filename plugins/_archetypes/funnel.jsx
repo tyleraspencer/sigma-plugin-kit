@@ -16,6 +16,16 @@ import {
   useLoadingState,
 } from '@sigmacomputing/plugin';
 
+// Sigma design tokens -- docs/design-system.md. A plugin reads as another
+// Sigma element only when it uses these; no loose hex below this line. Brand
+// colors replace `accent` and its tints only -- the neutrals never move.
+const T = {
+  ink: '#0f172a', body: '#475569', muted: '#7c8698', hairline: '#e5e8ef',
+  accent: '#274690', accentTint: '#eaf0fb', accentEdge: '#d8e0f8',
+  good: '#0f8a5f', bad: '#b42318', warn: '#b45309', warnTint: '#fdf1e3',
+  context: '#cbd5e1',
+};
+
 // The first two `column` entries are the label and the value IN THIS ORDER --
 // build-plugin-workbook.py binds them positionally.
 client.config.configureEditorPanel([
@@ -101,7 +111,7 @@ export default function App() {
     return () => ro.disconnect();
   }, []);
 
-  const accent = config.accent || '#2563eb';
+  const accent = config.accent || T.accent;
   const top = stages.length ? stages[0].value : 0;
   // Below this the per-stage caption has nowhere to go; drop it rather than
   // letting it overlap the bar.
@@ -181,9 +191,9 @@ export default function App() {
 const S = {
   wrap: { height: '100%', display: 'flex', flexDirection: 'column', padding: '12px 16px', gap: 8 },
   top: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: '0 0 auto' },
-  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: '#374151' },
+  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: T.body },
   badge: { fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
-           padding: '2px 6px', borderRadius: 3, background: '#fef3c7', color: '#92400e' },
+           padding: '2px 6px', borderRadius: 3, background: T.warnTint, color: T.warn },
   // minHeight 0 so the stages compress instead of overflowing the iframe.
   stages: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
             justifyContent: 'space-evenly', gap: 4, overflow: 'hidden' },
@@ -194,8 +204,8 @@ const S = {
          fontSize: 11, fontWeight: 600, minWidth: 0, transition: 'width .3s ease' },
   barLabel: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginRight: 8 },
   barValue: { fontVariantNumeric: 'tabular-nums', flex: '0 0 auto' },
-  caption: { fontSize: 9, color: '#9ca3af', textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
-  legend: { flex: '0 0 auto', fontSize: 9, color: '#9ca3af' },
+  caption: { fontSize: 9, color: T.muted, textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+  legend: { flex: '0 0 auto', fontSize: 9, color: T.muted },
   hint: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          textAlign: 'center', fontSize: 11, color: '#9ca3af', padding: '0 24px', lineHeight: 1.6 },
+          textAlign: 'center', fontSize: 11, color: T.muted, padding: '0 24px', lineHeight: 1.6 },
 };

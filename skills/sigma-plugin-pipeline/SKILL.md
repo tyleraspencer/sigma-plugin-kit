@@ -62,6 +62,12 @@ best match, and say you'll fall back to synthetic rows if it's wrong.
 - **Density** — compact and data-dense, or large and presentation-ready.
 - **Branding** — Sigma-native, or someone's colors and logos.
 
+The *default* on every one of these is already decided: `docs/design-system.md`
+is Sigma's own design system — tokens, type, chart conventions, and the five
+product design principles as React decisions. Ask what deviates from it, not
+what the style should be, and when the user waves you off, build to it. Brand
+colors replace the accent and its tint pair; the neutrals never move.
+
 **4. Whatever else actually changes the build**, and nothing that doesn't:
 
 - **Does clicking it do anything?** Cross-filtering needs a `variable` panel
@@ -113,7 +119,9 @@ Pass `--data` alongside `--path` when you have a sample of the real rows: the
 workbook still binds the warehouse table, but preflight checks the binding
 names against those headers and the bind harness renders them.
 
-Look-and-feel answers land in `plugins/<name>/src/App.jsx`. Interactivity
+Look-and-feel answers land in `plugins/<name>/src/App.jsx` — **read
+`docs/design-system.md` before you write or edit one**; it is short, and it is
+what keeps a plugin from looking embedded rather than native. Interactivity
 answers land in `configureEditorPanel` as a `variable` entry **before** the
 first deploy.
 
@@ -149,7 +157,9 @@ bash scripts/pipeline.sh <name> "Title"                # then the usual chain
 
 They all bind `label` then `value`, so no extra flags are needed. Pick by
 shape, then edit — the palette, the fields, the labels are yours to change.
-Take the default bar chart when nothing is close.
+Take the default bar chart when nothing is close. Each one already carries the
+`T` token block from `docs/design-system.md` and no loose hex — keep it that
+way in what you write.
 
 `pipeline.sh` scaffolds a **Vite + React** project — the only project shape.
 npm packages (Plotly, Mapbox, D3, Recharts) are available from the start, and
