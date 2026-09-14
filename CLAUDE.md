@@ -31,6 +31,9 @@ agent editing this repo for some other reason doesn't step on one:
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
 - A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px,
   and guard the `ResizeObserver`. (`docs/plugin-api.md` → "Loading, sizing".)
+- A plugin looks like a Sigma element or it looks embedded. Tokens, chart
+  conventions and the five design principles as React decisions:
+  `docs/design-system.md`. There is no theme API to read them from.
 - `Invalid kind: "<kind>"` means a *field* has a bad value shape.
   (`docs/elements-known-good.md` → "Decoding".)
 - HTTP 200 does not mean it worked. Check the compiled SQL.

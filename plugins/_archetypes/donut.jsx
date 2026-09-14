@@ -13,6 +13,16 @@ import {
   useLoadingState,
 } from '@sigmacomputing/plugin';
 
+// Sigma design tokens -- docs/design-system.md. A plugin reads as another
+// Sigma element only when it uses these; no loose hex below this line. Brand
+// colors replace `accent` and its tints only -- the neutrals never move.
+const T = {
+  ink: '#0f172a', body: '#475569', muted: '#7c8698', hairline: '#e5e8ef',
+  accent: '#274690', accentTint: '#eaf0fb', accentEdge: '#d8e0f8',
+  good: '#0f8a5f', bad: '#b42318', warn: '#b45309', warnTint: '#fdf1e3',
+  context: '#cbd5e1',
+};
+
 // The first two `column` entries are the label and the value IN THIS ORDER --
 // build-plugin-workbook.py binds them positionally.
 client.config.configureEditorPanel([
@@ -23,8 +33,12 @@ client.config.configureEditorPanel([
     allowedTypes: ['number', 'integer'] },
 
   { type: 'group', name: 'Style' },
+  // Six is the cap a composition stays readable at (docs/design-system.md ->
+  // "Charts"); past it the tail belongs in "Other", which the slice logic
+  // below builds. 'All' stays for the author who really does want twenty
+  // wedges, but it is not on the recommended side of the list.
   { type: 'dropdown', name: 'maxSlices', source: 'Style',
-    values: ['4', '6', '8', '10', 'All'], defaultValue: '6' },
+    values: ['4', '5', '6', 'All'], defaultValue: '6' },
   { type: 'toggle', name: 'showLegend', source: 'Style', defaultValue: true },
   { type: 'toggle', name: 'showTotal', source: 'Style', defaultValue: true },
 
@@ -37,11 +51,24 @@ client.config.configureEditorPanel([
   { type: 'variable', name: 'selected', allowedTypes: ['text-list'] },
 ]);
 
-// A categorical ramp, not a sequential one -- these slices are unordered
-// categories. Replace with the user's brand palette when there is one.
-const PALETTE = ['#2563eb', '#0891b2', '#7c3aed', '#db2777', '#ea580c',
-                 '#65a30d', '#0d9488', '#9333ea', '#c026d3', '#dc2626'];
-const OTHER_COLOR = '#9ca3af';
+// Slices are shares of ONE total and are drawn largest-first, so they take one
+// hue stepped deep-to-pale -- not ten unrelated colors, which encode a
+// difference in kind that isn't there and stop being distinguishable the
+// moment two land next to each other. docs/design-system.md -> "Charts".
+//
+// Interpolated rather than a fixed array so the ramp fits however many slices
+// survive the cap. The pale end stops well short of `accentTint`: a #eaf0fb
+// wedge on a white card reads as a hole in the donut, and it has to stay
+// clearly deeper than the grey "Other" takes or the two last slices merge.
+const RAMP_DEEP = [39, 70, 144];    // T.accent   #274690
+const RAMP_PALE = [141, 161, 206];  //            #8da1ce
+const sliceColor = (i, n) => {
+  const t = n <= 1 ? 0 : i / (n - 1);
+  const c = RAMP_DEEP.map((deep, k) => Math.round(deep + (RAMP_PALE[k] - deep) * t));
+  return 'rgb(' + c[0] + ', ' + c[1] + ', ' + c[2] + ')';
+};
+// The tail is not a category -- grey it out of the ranking.
+const OTHER_COLOR = T.context;
 
 const DEMO = [
   ['Audio', 128400], ['Charging', 96300], ['Cables', 71200],
@@ -167,10 +194,13 @@ export default function App() {
   const inner = r * 0.58;
 
   let angle = 0;
+  // Ramp across the real categories only -- "Other" takes grey, so counting it
+  // in would waste the palest step on a wedge that never uses it.
+  const nCategories = slices.filter((s) => !s.isOther).length;
   const wedges = slices.map((s, i) => {
     const sweep = (s.value / total) * 360;
     const w = { ...s, from: angle, to: angle + sweep,
-                color: s.isOther ? OTHER_COLOR : PALETTE[i % PALETTE.length] };
+                color: s.isOther ? OTHER_COLOR : sliceColor(i, nCategories) };
     angle += sweep;
     return w;
   });
@@ -239,22 +269,22 @@ export default function App() {
 const S = {
   wrap: { height: '100%', display: 'flex', flexDirection: 'column', padding: '12px 16px', gap: 8 },
   top: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: '0 0 auto' },
-  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: '#374151' },
+  title: { fontSize: 13, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: T.body },
   badge: { fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
-           padding: '2px 6px', borderRadius: 3, background: '#fef3c7', color: '#92400e' },
+           padding: '2px 6px', borderRadius: 3, background: T.warnTint, color: T.warn },
   // minHeight 0 on the flex body, or the SVG refuses to shrink and the plugin
   // spills past the iframe instead of fitting it.
   body: { flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', gap: 12 },
   chart: { flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  centerText: { fontSize: 16, fontWeight: 700, fill: '#111827' },
+  centerText: { fontSize: 16, fontWeight: 700, fill: T.ink },
   legend: { display: 'flex', flexDirection: 'column', gap: 3, minHeight: 0, overflowY: 'auto' },
   legendSide: { flex: 1 },
   legendBelow: { flex: '0 0 auto', width: '100%', maxHeight: '38%' },
   legendRow: { display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 6,
                alignItems: 'center', fontSize: 11 },
   swatch: { width: 9, height: 9, borderRadius: 2, flex: '0 0 auto' },
-  legendLabel: { color: '#4b5563', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  legendValue: { color: '#111827', fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
+  legendLabel: { color: T.body, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  legendValue: { color: T.ink, fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   hint: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          textAlign: 'center', fontSize: 11, color: '#9ca3af', padding: '0 24px', lineHeight: 1.6 },
+          textAlign: 'center', fontSize: 11, color: T.muted, padding: '0 24px', lineHeight: 1.6 },
 };
