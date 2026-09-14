@@ -375,54 +375,6 @@ def build_warehouse(args):
     return element, config, order
 
 
-def control_is_multiple(binding, panel_entries, force_single, force_multiple):
-    """Single- or multi-select, decided by the plugin's own `allowedTypes`.
-
-    The SDK treats 'text' and 'text-list' as DISTINCT ControlTypes, and a
-    `variable` entry's allowedTypes is an allowlist over them. So a plugin
-    declaring allowedTypes: ['text'] rejects a multi-select control -- its
-    type is 'text-list' -- and Sigma renders "Invalid selection" in the panel
-    for that binding.
-
-    It still *works*: the spec binds by controlId, which bypasses the panel's
-    own picker validation, and setVariable is variadic so one value assigns
-    fine. That is what makes it worth inferring rather than documenting. The
-    author sees a red warning on a plugin that behaves correctly, so the
-    warning reads as noise -- and the next real one does too.
-
-    Defaulting to multi while the shipped bar-chart template declares ['text']
-    meant the kit's own default path produced that warning on every build.
-    Read the declaration instead of guessing; --control-single /
-    --control-multiple still win, for a panel this cannot parse.
-    """
-    if force_single and force_multiple:
-        raise SystemExit("build-plugin-workbook: --control-single and "
-                         "--control-multiple are mutually exclusive.")
-    if force_single:
-        return False
-    if force_multiple:
-        return True
-    entry = next((e for e in (panel_entries or [])
-                  if e.get("type") == "variable" and e.get("name") == binding), None)
-    allowed = entry.get("allowedTypes") if entry else None
-    if not allowed:
-        # No allowlist means every ControlType is accepted, so neither choice
-        # can be wrong. Keep the historical default.
-        return True
-    if "text-list" in allowed:
-        return True
-    if "text" in allowed:
-        return False
-    # Declares neither -- a number/date control, which this only ever builds as
-    # a text list. Say so rather than silently emitting a control the panel
-    # will reject.
-    sys.stderr.write(
-        "build-plugin-workbook: warning: the plugin's `variable` entry %r allows "
-        "%s, and this builds a text list control -- expect \"Invalid selection\" "
-        "in the editor panel.\n" % (binding, ", ".join(allowed)))
-    return True
-
-
 def build_variable_control(binding, values, name=None, multiple=True):
     """A list control the plugin writes into, plus the config key that binds it.
 
@@ -518,12 +470,7 @@ def main():
     ap.add_argument("--control-name", help="display name for --variable-control's "
                                            "control (it always renders its own label)")
     ap.add_argument("--control-single", action="store_true",
-                    help="force --variable-control single-select. Default: inferred "
-                         "from the plugin's declared allowedTypes -- ['text'] is "
-                         "single, ['text-list'] is multi.")
-    ap.add_argument("--control-multiple", action="store_true",
-                    help="force --variable-control multi-select, overriding the same "
-                         "inference.")
+                    help="make --variable-control single-select instead of multi")
     ap.add_argument("--control-values", metavar="FILE",
                     help="choices for --variable-control's list control, one per "
                          "line. Required with --path: the rows live in the warehouse, "
@@ -684,9 +631,7 @@ def main():
             source_desc = repr(col)
         control, control_id, n_values = build_variable_control(
             binding, values, name=args.control_name,
-            multiple=control_is_multiple(binding, panel_entries,
-                                         args.control_single,
-                                         args.control_multiple))
+            multiple=not args.control_single)
         controls.append(control)
         # The canonical shape Sigma itself stores, read back off a workbook it
         # had normalized: a control binding is an object, unlike a column
