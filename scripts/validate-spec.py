@@ -41,6 +41,7 @@ CHECKS = [
     "layoutelement-has-children",
     "column-format-shape",
     "bare-ref-resolution",
+    "action-refs-resolve",
     "plugin-refs-resolve",
     "warehouse-refs-qualified",
 ]
@@ -415,6 +416,195 @@ _UUID_RE = re.compile(
 )
 
 
+def issues_action_refs_resolve(spec: dict) -> list[tuple[str, str]]:
+    """Verify every action/effect reference resolves to something real.
+
+    Restored 2026-09-15. This check shipped upstream 2026-08-03, was dropped
+    with the other 12 in the extraction (see NOTICE), and the drop was never
+    reflected in the closing note -- every run since has claimed to verify
+    overlayId/control/table/tabbedContainer/agentId references while doing
+    nothing of the kind. Ported back from 60ff083 rather than rewritten.
+
+    Why it matters: a dangling `overlayId`, `control`, `table`,
+    `tabbedContainer`, or `navigate.target.page` fails SILENTLY. The POST
+    succeeds and the button renders; nothing happens when it is clicked.
+    Same family as `plugin-refs-resolve` -- the API validates none of these.
+
+    Checks, per effect:
+    - `set-control-value`: `control`, and `value.control` when the value is
+      itself sourced from a control.
+    - `clear-control`: `scope.control`.
+    - `open-overlay`: `overlayId` matches an `overlays[].id` (modals moved out
+      of `pages[]` into a top-level `overlays` array 2026-08-10 --
+      `pages[].type:"modal"` is no longer valid).
+    - `navigate`: `target.page` matches a page `id`, `target.element` an
+      element `id`.
+    - `select-tab`: `tabbedContainer` names a `kind:"tabbed-container"`
+      element, and `selectedTab.index` is in range of its `tabs[]`.
+    - `insert-rows`/`update-rows`/`delete-rows`: `table` names a
+      `kind:"input-table"` element; `values` keys match that table's column
+      `id`s, and any nested `{type:"control"}` value resolves.
+    - `refresh-element`: `target.element` names an element.
+    - `chat.agentId` matches an `agents[].id`.
+
+    Also walks `agents[].tools[].steps[]`, which reuses this same effect
+    vocabulary with an added `kind:"effect"` sibling key per step.
+
+    Two effects are deliberately NOT checked. `open-document`'s `document`
+    and optional `target` name a page/element in a DIFFERENT workbook, whose
+    ids are not in this spec and cannot be resolved from here (upstream
+    `reference/specification/actions.md` notes a typo there is a silent no-op
+    with nothing to validate against). `close-overlay` takes no reference.
+
+    Note this check says nothing about whether an effect is ACCEPTED. On
+    papercrane, `insert-rows`/`delete-rows`/`open-url` are rejected outright
+    at POST with `Invalid kind: "button"` -- see
+    docs/elements-known-good.md -> the effects table. A clean run here means
+    the references are internally consistent, not that the spec publishes.
+    """
+    issues = []
+    all_elements = _all_elements(spec)
+    control_ids = _collect_control_ids(spec)
+    elements_by_id = {el.get("id"): el for _, el in all_elements if el.get("id")}
+    overlay_ids = {o.get("id") for o in (spec.get("overlays") or []) if o.get("id")}
+    all_page_ids = {p.get("id") for p in spec.get("pages", [])}
+    agent_ids = {a.get("id") for a in (spec.get("agents") or []) if a.get("id")}
+
+    def _check_control(label: str, cid, loc: str):
+        if cid and cid not in control_ids:
+            issues.append((
+                "fail",
+                f"{loc}: {label} `{cid}` does not match any `controlId` in the spec. "
+                "The effect will silently no-op."
+            ))
+
+    def _check_element(label: str, eid, loc: str):
+        if eid and eid not in elements_by_id:
+            issues.append((
+                "fail",
+                f"{loc}: {label} `{eid}` does not match any element `id` in the spec. "
+                "The effect will silently no-op."
+            ))
+
+    def _check_effect(fx: dict, loc: str):
+        if not isinstance(fx, dict):
+            return
+        effect = fx.get("effect")
+        loc = f"{loc} ({effect})"
+
+        if effect == "set-control-value":
+            _check_control("target control", fx.get("control"), loc)
+            value = fx.get("value") or {}
+            if isinstance(value, dict) and value.get("type") == "control":
+                _check_control("source control", value.get("control"), loc)
+
+        elif effect == "clear-control":
+            scope = fx.get("scope") or {}
+            if isinstance(scope, dict) and scope.get("type") == "control":
+                _check_control("scope control", scope.get("control"), loc)
+
+        elif effect == "open-overlay":
+            overlay_id = fx.get("overlayId")
+            if overlay_id and overlay_id not in overlay_ids:
+                issues.append((
+                    "fail",
+                    f"{loc}: overlayId `{overlay_id}` does not match any "
+                    "`overlays[].id`. The overlay will silently fail to open."
+                ))
+
+        elif effect == "navigate":
+            target = fx.get("target") or {}
+            page_id = target.get("page")
+            if page_id and page_id not in all_page_ids:
+                issues.append((
+                    "fail",
+                    f"{loc}: target.page `{page_id}` does not match any page `id`. "
+                    "The navigation will silently no-op."
+                ))
+            _check_element("target.element", target.get("element"), loc)
+
+        # `refresh-element`'s target is element-only -- it does NOT accept
+        # `navigate`'s {type:page} variant, despite the shared field name.
+        elif effect == "refresh-element":
+            _check_element("target.element", (fx.get("target") or {}).get("element"), loc)
+
+        elif effect == "select-tab":
+            tc_id = fx.get("tabbedContainer")
+            tc_el = elements_by_id.get(tc_id)
+            if tc_id and (tc_el is None or tc_el.get("kind") != "tabbed-container"):
+                issues.append((
+                    "fail",
+                    f"{loc}: tabbedContainer `{tc_id}` does not match any "
+                    "`kind:\"tabbed-container\"` element. The tab switch will silently no-op."
+                ))
+            elif tc_el is not None:
+                idx = (fx.get("selectedTab") or {}).get("index")
+                n_tabs = len(tc_el.get("tabs") or [])
+                if isinstance(idx, int) and not (0 <= idx < n_tabs):
+                    issues.append((
+                        "fail",
+                        f"{loc}: selectedTab.index {idx} is out of range for "
+                        f"`{tc_id}`, which has {n_tabs} tab(s) (valid: 0-{n_tabs - 1})."
+                    ))
+
+        # `update-rows` was not in the original check; actions.md lists it
+        # beside the other two with the same `table` field and the same
+        # silent-no-op failure, so it is checked identically here.
+        elif effect in ("insert-rows", "update-rows", "delete-rows"):
+            table_id = fx.get("table")
+            table_el = elements_by_id.get(table_id)
+            if table_id and (table_el is None or table_el.get("kind") != "input-table"):
+                issues.append((
+                    "fail",
+                    f"{loc}: table `{table_id}` does not match any "
+                    "`kind:\"input-table\"` element. The write will silently no-op."
+                ))
+            elif table_el is not None and effect in ("insert-rows", "update-rows"):
+                table_col_ids = {
+                    c.get("id") for c in (table_el.get("columns") or []) if c.get("id")
+                }
+                for col_id, val in (fx.get("values") or {}).items():
+                    if col_id not in table_col_ids:
+                        issues.append((
+                            "fail",
+                            f"{loc}: values key `{col_id}` does not match any column "
+                            f"`id` on input-table `{table_id}`."
+                        ))
+                    if isinstance(val, dict) and val.get("type") == "control":
+                        _check_control(
+                            f"values[{col_id!r}] control", val.get("control"), loc
+                        )
+
+    for pi, el in all_elements:
+        if not isinstance(el, dict):
+            continue
+        el_label = el.get("id") or "(unnamed)"
+        for ai, action in enumerate(el.get("actions", []) or []):
+            for fi, fx in enumerate((action or {}).get("effects", []) or []):
+                loc = f"elements[{pi}] ({el_label}).actions[{ai}].effects[{fi}]"
+                _check_effect(fx, loc)
+
+        if el.get("kind") == "chat":
+            agent_id = el.get("agentId")
+            if agent_id and agent_id not in agent_ids:
+                issues.append((
+                    "fail",
+                    f"elements[{pi}] ({el_label}): agentId `{agent_id}` does not "
+                    "match any `agents[].id` in the spec. The chat element will render "
+                    "with no agent attached."
+                ))
+
+    for gi, agent in enumerate(spec.get("agents") or []):
+        agent_label = agent.get("id") or "(unnamed)"
+        for ti, tool in enumerate((agent or {}).get("tools", []) or []):
+            tool_label = (tool or {}).get("toolId") or "(unnamed)"
+            for si, step in enumerate((tool or {}).get("steps", []) or []):
+                loc = f"agents[{gi}] ({agent_label}).tools[{ti}] ({tool_label}).steps[{si}]"
+                _check_effect(step, loc)
+
+    return issues
+
+
 def issues_plugin_refs_resolve(spec: dict) -> list[tuple[str, str]]:
     """Verify `kind: "plugin"` elements are wired to something real.
 
@@ -601,6 +791,7 @@ def main() -> None:
         ("layoutelement-has-children", lambda: issues_layoutelement_has_children(root)),
         ("column-format-shape",       lambda: issues_column_format_shape(spec)),
         ("bare-ref-resolution",       lambda: issues_bare_ref_resolution(spec)),
+        ("action-refs-resolve",       lambda: issues_action_refs_resolve(spec)),
         ("plugin-refs-resolve",       lambda: issues_plugin_refs_resolve(spec)),
         ("warehouse-refs-qualified", lambda: issues_warehouse_refs_qualified(spec)),
     ]:

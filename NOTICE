@@ -11,7 +11,10 @@ the upstream skill's, trimmed CI, and validate-spec.py reduced to the checks
 this kit can actually fire. Other inherited tooling (sigma-resolve.py,
 workbook-manifest.py, harvest-workbook.sh, the Cowork/Cortex skill-packaging
 harness, and 12 of validate-spec.py's checks) has since been removed as
-unused here.
+unused here. One of those checks, `action-refs-resolve`, was restored
+2026-09-15 -- the removal had left the validator's closing note advertising
+it, so every run since claimed a referential-integrity pass it was not making.
+Eleven remain removed.
 
 Some of that code is in turn adapted from Sigma's own reference skill pair,
 distributed as dated zip releases rather than a repository:
