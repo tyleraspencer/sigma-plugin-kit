@@ -43,6 +43,14 @@
 # needs steps 1-5 and nothing else. That is what --redeploy does.
 #
 # Flags (before `--`):
+#   --dev             serve the plugin from Vite on localhost and stop. The
+#                     iterate loop: no GitHub, no Sigma API, no Pages wait,
+#                     and edits hot-reload into the workbook element once it
+#                     is pointed at the dev URL. --dev-stop ends it.
+#   --deploy          "yes, GitHub" -- answers the dev-or-deploy question for
+#                     a run that also updates the workbook spec.
+#   --ship            --redeploy with both gates skipped, for a bundle change
+#                     you are sure of.
 #   --redeploy        stop after step 5: build, preflight, harness, deploy,
 #                     confirm the registration. The fast loop for a change
 #                     inside the bundle. Prints the remembered workbook URL
@@ -79,17 +87,27 @@ title=""
 mode="auto"
 adopt_wb=""
 ship=""
+target=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --) shift; break ;;
-    --redeploy|--fast) mode="redeploy"; shift ;;
+    --redeploy|--fast) mode="redeploy"; target="github"; shift ;;
     # The small-update path: build + deploy + confirm the registration, and
     # nothing else. The gates cost 0.25s between them, so this does NOT buy
     # wall clock -- the only real wait in a deploy is GitHub Pages. What it
     # buys is fewer moving parts when you already know what you changed: no
     # harness to regenerate and open, and no static check that can block a
     # one-line style tweak. Use --redeploy when you want the gates.
-    --ship) mode="redeploy"; ship=1; shift ;;
+    --ship) mode="redeploy"; ship=1; target="github"; shift ;;
+    # Serve the plugin from Vite and point the workbook element at it. No
+    # GitHub, no Sigma API, no 40s wait -- edits hot-reload in place. This is
+    # the iterate loop; a GitHub deploy is for when you want the change to
+    # exist for everyone else.
+    --dev) mode="dev"; target="dev"; shift ;;
+    --dev-stop) mode="dev-stop"; shift ;;
+    # "Yes, GitHub" -- the explicit answer to the question the guard below
+    # asks, for a run that also changes the workbook spec.
+    --deploy) target="github"; shift ;;
     --update-workbook) mode="update-workbook"; shift ;;
     --new-workbook) mode="new-workbook"; shift ;;
     --workbook-id)
@@ -143,6 +161,7 @@ note() { [ -n "${SIGMA_VERBOSE:-}" ] && printf '  %s\n' "$1" >&2 || true; }
 total=7
 [ "$mode" = "redeploy" ] && total=5
 [ -n "$ship" ] && total=3
+[ "$mode" = "dev" ] && total=3
 
 # --- deploy state ---------------------------------------------------------
 # What a re-run needs to know and cannot cheaply re-derive: which pluginId this
@@ -177,6 +196,37 @@ state_set() { # state_set <key> <value>
   mv "$tmp" "$state_file"
 }
 
+# --- dev server, and the dev-or-deploy question ---------------------------
+# Sigma can point a plugin element at any URL, so the whole iterate loop can
+# run off Vite on localhost: element ••• menu -> Point to Development URL ->
+# http://localhost:5173. Edits hot-reload, nothing is pushed, and none of the
+# 40s Pages propagation is paid. A GitHub deploy is for making the change exist
+# for everyone else, which is a different decision -- so after the first build,
+# the pipeline refuses to pick for you.
+dev_port="${SIGMA_DEV_PORT:-5173}"
+dev_pid_file="$state_dir/dev-${name}.pid"
+dev_log="$state_dir/dev-${name}.log"
+dev_owner_file="$state_dir/dev-port-${dev_port}.owner"
+
+dev_running() { # -> 0 if something answers on the dev port
+  curl -sS -o /dev/null --connect-timeout 2 --max-time 5 \
+    "http://localhost:$dev_port/" 2>/dev/null
+}
+
+if [ "$mode" = "dev-stop" ]; then
+  if [ -f "$dev_pid_file" ]; then
+    dev_pid="$(cat "$dev_pid_file")"
+    kill "$dev_pid" 2>/dev/null || true
+    rm -f "$dev_pid_file"
+    [ "$(cat "$dev_owner_file" 2>/dev/null)" = "$name" ] && rm -f "$dev_owner_file"
+    say "dev server stopped (pid $dev_pid)"
+  else
+    say "no dev server recorded for $name"
+  fi
+  echo "  Point the element back at its deployed URL: ••• -> Point to Development URL -> clear" >&2
+  exit 0
+fi
+
 # --- 1. scaffold ----------------------------------------------------------
 next_step "build"
 if [ -f "plugins/$name/package.json" ]; then
@@ -200,6 +250,85 @@ for ((i = 0; i < ${#extra_args[@]}; i++)); do
     break
   fi
 done
+
+if [ "$mode" = "dev" ]; then
+  next_step "preflight"
+  "${SIGMA_PYTHON:-python3}" scripts/preflight-plugin.py "$name" \
+    ${data_file:+--data "$data_file"} >&2 || {
+      echo "  Preflight failed. Fix it before staring at a browser -- these are" >&2
+      echo "  the failures that render perfectly and are wrong." >&2
+      exit 1; }
+
+  next_step "dev server"
+  dev_owner="$(cat "$dev_owner_file" 2>/dev/null || true)"
+  if dev_running; then
+    if [ -n "$dev_owner" ] && [ "$dev_owner" != "$name" ]; then
+      # Vite serves whatever directory it was started in, so a port shared
+      # between two plugins silently shows you the wrong one -- with your
+      # edits appearing to do nothing.
+      echo "pipeline: port $dev_port is already serving '$dev_owner', not '$name'." >&2
+      echo "  Stop it first:  bash scripts/pipeline.sh $dev_owner --dev-stop" >&2
+      echo "  Or pick another port: SIGMA_DEV_PORT=5174 (and point the element at it)." >&2
+      exit 1
+    fi
+    note "already serving on $dev_port"
+  else
+    # `exec` matters twice over. Without it the `&` backgrounds a SUBSHELL
+    # that then waits on npm, so (a) $! is the subshell's pid and --dev-stop
+    # kills the wrong process, leaving Vite orphaned on the port, and (b) that
+    # subshell keeps the script's inherited stderr open for as long as Vite
+    # runs -- so a caller reading this script through a pipe never sees EOF and
+    # appears to hang forever, with no output at all. exec replaces the
+    # subshell with npm itself: correct pid, no inherited descriptors.
+    ( cd "$repo_root/plugins/$name" \
+      && exec nohup npm run dev >"$dev_log" 2>&1 </dev/null ) &
+    printf '%s\n' "$!" > "$dev_pid_file"
+    printf '%s\n' "$name" > "$dev_owner_file"
+    waited=0
+    until dev_running; do
+      waited=$((waited + 1))
+      if [ "$waited" -gt 30 ]; then
+        echo "pipeline: Vite did not answer on $dev_port within 30s. Log:" >&2
+        tail -20 "$dev_log" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+    note "started in ${waited}s (pid $(cat "$dev_pid_file"), log $dev_log)"
+  fi
+
+  say "done (dev)"
+  echo "  dev URL:  http://localhost:$dev_port" >&2
+  echo "  In the workbook: the plugin element's ••• menu -> Point to Development URL" >&2
+  echo "  Edits to src/App.jsx hot-reload in place. Nothing was pushed or published." >&2
+  echo "  Changing the editor PANEL means re-entering that element's panel values." >&2
+  echo "  Stop with: bash scripts/pipeline.sh $name --dev-stop" >&2
+  exit 0
+fi
+
+# After the first build, deploying to GitHub is a choice, not a default: it
+# costs ~40s of Pages propagation and makes the change public, while --dev
+# costs nothing and is invisible. Only ask when there is a bundle change to
+# place -- a spec-only re-run has nothing to put anywhere.
+if [ -z "$target" ] && [ -n "$(state_get plugin_id)" ]; then
+  deployed_hash=""
+  for f in "$state_dir"/*__"$name".srchash; do
+    [ -f "$f" ] && deployed_hash="$(cat "$f" 2>/dev/null || true)"
+  done
+  current_hash="$(plugin_source_hash "$repo_root/plugins/$name")"
+  if [ -n "$deployed_hash" ] && [ "$current_hash" != "$deployed_hash" ]; then
+    echo "pipeline: '$name' is already deployed and its bundle has changed." >&2
+    echo "  Pick where this change goes -- the pipeline will not guess:" >&2
+    echo "" >&2
+    echo "    --dev       serve it from Vite on localhost:$dev_port. Hot-reloads," >&2
+    echo "                nothing pushed, nothing public, no 40s Pages wait." >&2
+    echo "    --ship      push to GitHub Pages, gates skipped. ~44s." >&2
+    echo "    --redeploy  push to GitHub Pages, gates first. ~44s." >&2
+    echo "    --deploy    push to GitHub Pages AND update the workbook spec" >&2
+    echo "                (use with the same data flags you built with)." >&2
+    exit 2
+  fi
+fi
 
 # --- 2. preflight ---------------------------------------------------------
 # Static checks for the silent failure modes, BEFORE anything irreversible.
@@ -269,20 +398,11 @@ next_step "deploy"
 # has nothing left to protect. 44s -> ~5s on a real bundle change. A first
 # deploy still waits, because that is the run where the URL has to be proven
 # before it becomes a pluginId nobody can move.
-# The URL is not known until deploy returns, so predict it from the cache: a
-# remembered plugin_url for THIS plugin name, with a pluginId beside it, means
-# the last run deployed and registered that same path. If the prediction is
-# somehow wrong, the deploy is for a URL with no registration -- and
-# `register-plugin.sh create` independently refuses a URL that is not publicly
-# fetchable as HTML, so the worst case is a loud failure there, never a
-# registration pointing at nothing.
-no_wait=""
-case "$(state_get plugin_url)" in
-  */plugins/"$name"/index.html)
-    [ -n "$(state_get plugin_id)" ] && no_wait=1 ;;
-esac
+# A GitHub deploy waits for Pages to serve the exact bytes -- ~40s of the ~44s
+# it takes. That is the price of the public URL, and the iterate loop is not
+# supposed to pay it: use --dev instead. (SIGMA_DEPLOY_NO_WAIT=1 exists as an
+# escape hatch and nothing sets it for you.)
 url="$(SIGMA_PREFLIGHT_DONE=1 SIGMA_PLUGIN_SRC_HASH="${src_hash:-}" \
-       SIGMA_DEPLOY_NO_WAIT="$no_wait" \
        bash scripts/deploy-plugin.sh "$name")"
 echo "  $url" >&2
 

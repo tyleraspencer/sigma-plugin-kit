@@ -118,34 +118,53 @@ the UUID 404s. Without the printed line, take the `url` field from
 
 ## Editing after the first build
 
-**Never re-run the whole chain for a visual tweak.** The URL and `pluginId` are
-settled at the first deploy and the workbook goes on pointing at them, so an
-edit to `App.jsx` changes exactly one thing: the bundle.
+**After the first build, ASK before you place a bundle change.** One
+`AskUserQuestion`, two options, every time — the pipeline refuses to guess and
+so should you:
 
-| What changed | Command |
+- **`--dev`** *(recommended for iterating)* — serves the plugin from Vite on
+  `localhost:5173` and stops. Nothing pushed, nothing public, no Pages wait,
+  and edits hot-reload straight into the workbook element. **~1s.**
+- **`--ship` / `--redeploy`** — pushes to GitHub Pages, which is what makes the
+  change exist for anyone else. Waits for Pages to serve the exact bytes: **~44s**,
+  ~40s of which is propagation.
+
+That is a real choice with different consequences, not a performance
+trade — local is invisible to everyone else, GitHub is permanent and public.
+Don't decide it for the user, and don't ask on a first build: the plugin has to
+be on a public URL before it can be registered at all.
+
+`pipeline.sh` enforces this. A bare re-run of an already-deployed plugin whose
+bundle has changed exits **2** and prints the four ways to say what you meant.
+
+**One-time setup per element, and the user has to do it in the browser:** the
+plugin element's **•••** menu → **Point to Development URL** →
+`http://localhost:5173`. That is already the `devUrl` every registration gets
+and the port `vite.config.js` pins. Say this when you hand over a `--dev`
+session; nothing happens in the workbook until it is done. Clear the same
+setting to go back to the deployed bundle.
+
+| What you want | Command |
 | --- | --- |
-| Still iterating on how it looks | `cd plugins/<name> && npm run dev`, then the element's **•••** → **Point to Development URL** → `http://localhost:5173`. Hot-reloads; changing the *panel* means re-entering panel values. |
-| Want a local verdict, no Sigma tab | `( cd plugins/<name> && npm run build ) && python3 scripts/verify-plugin-binding.py <name> [--data FILE]` |
-| Shipping a bundle change you are sure of | `bash scripts/pipeline.sh <name> --ship` — build + deploy + confirm the registration. Skips both gates; says so every time. |
-| Shipping a bundle change, gates on | `bash scripts/pipeline.sh <name> --redeploy` |
-| The panel, bindings, data or title changed | `bash scripts/pipeline.sh <name> "Title" -- <the same flags>` — regenerates the spec and **updates the same workbook in place**, so a shared link keeps working. |
+| Iterate on how it looks | `bash scripts/pipeline.sh <name> --dev` — then just edit `src/App.jsx`; Vite hot-reloads and no further command is needed. `--dev-stop` when done. |
+| A local verdict, no browser | `( cd plugins/<name> && npm run build ) && python3 scripts/verify-plugin-binding.py <name> [--data FILE]` |
+| Ship a bundle change you are sure of | `bash scripts/pipeline.sh <name> --ship` |
+| Ship a bundle change, gates first | `bash scripts/pipeline.sh <name> --redeploy` |
+| The panel, bindings, data or title changed | `bash scripts/pipeline.sh <name> "Title" --deploy -- <the same flags>` — regenerates the spec and **updates the same workbook in place**, so a shared link keeps working. |
+
+`--dev` runs preflight first (0.15s) and skips the harness — the dev server *is*
+the visual check. Changing the editor **panel** means re-entering that element's
+panel values in the workbook, and a panel change is also the one thing a dev
+session cannot show you a workbook-side error for.
 
 Pass the **same** `--data`/`--path`/`--bind` flags you built with: dropping them
 generates a different spec, which counts as a change and republishes.
 `--new-workbook` forces a second workbook; `--workbook-id <id>` re-attaches one
 the kit has lost track of.
 
-**Where the time actually goes** (measured, real bundle change): build + push
-4s, GitHub Pages propagation ~40s, gates 0.25s, everything else under a second.
-So a re-deploy **does not wait for Pages** — the wait only ever protected
-registration, and a re-deploy has a registration already. `--ship` and
-`--redeploy` both return in **~5s**, and the bytes land about 40s later. The
-gates are 0.6% of a deploy; skipping them buys clarity, not time.
-
-Two consequences worth saying out loud to whoever asked for the change:
-**reload the workbook a minute after the command returns, not immediately**,
-and a first deploy still waits, because that is the run where the URL has to be
-proven before it becomes a `pluginId` nobody can move.
+**Where the time goes** (measured on a real bundle change): build + push 4s,
+Pages propagation ~40s, the two gates 0.25s. The gates are 0.6% of a deploy —
+which is why the answer to "make it faster" is `--dev`, not fewer checks.
 
 **A workbook assembled by post-processing a generated spec must not be
 regenerated** — the generator cannot see hand-added elements, so a regenerating
