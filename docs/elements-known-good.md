@@ -246,9 +246,6 @@ Probed 2026-09-15: a spec with three bad bindings -- one bare string, one
 
 ## button
 
-The `button` kind and its `actions`/`effects` structure are fine; the
-*effects* are where it breaks (below).
-
 ```json
 {
   "id": "btn-view", "kind": "button", "text": "Summary", "appearance": "outline",
@@ -258,6 +255,75 @@ The `button` kind and its `actions`/`effects` structure are fine; the
   ]}]
 }
 ```
+
+A bare `"trigger": "on-click"` is accepted, but **the object form is what
+Sigma's own UI emits** and the only form that can carry a condition:
+
+```json
+"trigger": { "on": "on-click",
+             "condition": { "type": "formula", "formula": "IsNotNull([cPick])" } }
+```
+
+Triggers seen on UI-authored workbooks, by element kind: `button` →
+`on-click`; `control` → `on-change`; `table`/`pivot-table`/`input-table`/chart
+→ `on-select`; `table` → `on-context-menu-click`. **A `control` with an
+`on-change` action is how a plugin's `setVariable` reaches an action** — the
+plugin writes a control, the control fires.
+
+## input-table, and insert-rows
+
+**Both work from the spec API.** This file previously listed `insert-rows` as
+rejected outright; that was a wrong *field name*, not a gated feature — the
+exact trap at the top of this file, self-inflicted. The field is
+`tableElementId`, and `values` is a **map keyed by input-table column id**.
+The probes that failed used `table`, `elementId`, a `rows[]` array, and `values`
+as a list. Verified 2026-09-15 on papercrane: POST 200, GET-spec round-trip
+unchanged, both tables compile (workbook `757ed0ae`).
+
+```json
+{ "id": "tbl-queue", "kind": "input-table",
+  "source": { "kind": "empty", "connectionId": "<uuid>" },
+  "inputMode": "explore",
+  "name": { "text": "Pricing review queue", "fontWeight": "bold" },
+  "columns": [
+    { "id": "q-product", "type": "text", "name": "Product" },
+    { "id": "q-price", "type": "number", "name": "Avg price",
+      "format": { "kind": "number", "formatString": "$,.2f" } },
+    { "id": "q-verdict", "type": "text", "name": "Verdict",
+      "values": ["Needs review", "Keep as-is"], "pills": "color-by-option" },
+    { "id": "q-at", "type": "datetime", "name": "Queued at" }
+  ],
+  "sort": [{ "columnId": "q-at", "direction": "descending", "nulls": "last" }] }
+```
+
+- Column `type` is one of `text` / `number` / `datetime` / `checkbox`. A column
+  with a `formula` instead is computed; `{"id": "ID"}`, `{"id": "UPDATED_AT"}`,
+  `{"id": "UPDATED_BY"}` re-declare Sigma's system columns.
+- `source: {kind: "empty", connectionId}` needs a connection that hosts input
+  tables. `bee6615c-7d11-435c-8819-e32207b27fe4` (Sigma Sample Database) does.
+  `{kind: "linked", from: "<elementId>"}` is the other form the UI emits.
+- **Seeding rows from the spec is still impossible** (`rows`, `data`,
+  `seedData`, `initialRows` are dropped; `source: {kind: "csv"}` is rejected) and
+  there is still no REST write endpoint. `insert-rows` is now the way to get a
+  row in from code — fired by an action, not by an API call.
+
+```json
+{ "effect": "insert-rows", "tableElementId": "tbl-queue",
+  "values": {
+    "q-product": { "type": "control", "control": "cPickProduct" },
+    "q-verdict": { "type": "constant", "value": { "type": "text", "value": "Needs review" } },
+    "q-at": { "type": "formula", "formula": "Now()" } } }
+```
+
+`update-rows` takes the same `tableElementId` + `values`, plus
+`whichRows: {type: "single-row", primaryKeys: {<colId>: {type: "formula", ...}}}`.
+A formula in `values` can reference a control by `[controlId]`, so one packed
+control is an alternative to one control per column.
+
+**Harvest, do not guess.** All of the above came from `GET
+/v2/workbooks/<id>/spec` on workbooks the Sigma UI had authored — the fastest
+way to settle any "can the spec API do X" question is to find a workbook where
+a human already did X and read its spec back.
 
 ## control
 
@@ -272,6 +338,23 @@ An element's `id` and its `controlId` must **differ**, or you get
 
 `controlType: "slider"` and `"range-slider"` are rejected outright. For a
 numeric parameter use `list` + `selectionMode: "single"` + a manual source.
+
+**A free-text or numeric scratch control needs no source at all**, which is
+what a plugin writing arbitrary values wants — a manual `values` list would
+reject anything not already in it:
+
+```json
+{ "id": "ctl-pick-product", "kind": "control", "controlId": "cPickProduct",
+  "name": "Picked product", "controlType": "text",
+  "mode": "equals", "showOperators": false },
+{ "id": "ctl-pick-price", "kind": "control", "controlId": "cPickPrice",
+  "name": "Avg price", "controlType": "number", "mode": "=" }
+```
+
+`controlType` values seen on UI-authored workbooks: `list`, `number`,
+`segmented`, `text`, `text-area`, `switch`, `date-range`, `number-range`,
+`slider`, `synced`. (`slider` exists in the product but the spec API rejects
+it, so treat the others as unverified until POSTed.)
 
 **A control's `source` must be `manual`.** Sourcing its choices from a column
 of an element -- the obvious shape, and what the UI offers --
@@ -311,7 +394,7 @@ FILE`. That is why `--variable-control` needs `--control-values` under
 
 | Shape | Result |
 |---|---|
-| `insert-rows` / `delete-rows` / `open-url` effects | `Invalid kind: "button"`; every variant tried (dynamic-value objects, plain scalars, `rows[]`, `elementId` instead of `table`, no values, `inputMode:"edit"`) |
+| ~~`insert-rows` effects~~ | **Retracted 2026-09-15 — `insert-rows` works.** The probes named the target `table`/`elementId` instead of `tableElementId`; see "input-table, and insert-rows" above. `delete-rows` and `open-url` failed in that same session and were never re-probed, so assume the same mistake rather than a limit. |
 | `source: {kind: "sql", ..., sql: "..."}` | `Invalid kind: "table"` — the field is **`statement`**, not `sql`; see the working shape above |
 | `source: {kind: "custom-sql" / "customSql" / "warehouse-sql"}` | `Invalid kind: "table"` |
 | `source: {kind: "manual" / "inline"}` on a table | `Invalid kind: "table"` |
