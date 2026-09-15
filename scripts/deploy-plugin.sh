@@ -42,6 +42,7 @@
 # pluginId. This script polls the live URL and fails unless it comes back
 # 200 text/html with bytes matching what was just pushed.
 set -euo pipefail
+note() { [ -n "${SIGMA_VERBOSE:-}" ] && printf '  %s\n' "$1" >&2 || true; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_REPO="${SIGMA_PLUGIN_HOST_REPO:-tyleraspencer/sigma-plugins}"
@@ -161,7 +162,7 @@ if [ -n "${SIGMA_PREFLIGHT_DONE:-}" ]; then
   # pipeline.sh already ran the full preflight, with --data, a few seconds ago.
   # Running it again would re-check the same bytes and print the same report
   # into the caller's output a second time.
-  echo "  preflight: already run by the caller" >&2
+  note "preflight: already run by the caller"
 elif [ -f "$preflight_py" ] && command -v "${SIGMA_PYTHON:-python3}" >/dev/null 2>&1; then
   if ! "${SIGMA_PYTHON:-python3}" "$preflight_py" "$name" >&2; then
     echo "deploy-plugin: refusing to publish plugins/$name -- preflight failed." >&2
@@ -185,7 +186,7 @@ if [ -z "${SIGMA_FORCE_DEPLOY:-}" ] && [ -n "$src_hash" ] \
      && assets_match "$src/dist" "$HOST_URL/plugins/$name"; then
     rm -f "$served"
     echo "Unchanged since the last deploy, and $url still serves it." >&2
-    echo "  Skipped build, clone and push. Force with SIGMA_FORCE_DEPLOY=1." >&2
+    note "Skipped build, clone and push. Force with SIGMA_FORCE_DEPLOY=1."
     printf '%s\n' "$url"
     exit 0
   fi
@@ -220,7 +221,7 @@ fi
 
 # --- Get a clone of the host repo -----------------------------------------
 if [ -d "$CLONE_DIR/.git" ]; then
-  echo "Updating host clone at $CLONE_DIR ..." >&2
+  note "Updating host clone at $CLONE_DIR ..."
   git -C "$CLONE_DIR" fetch -q origin main
   # A deploy cache, not a working tree anyone edits, so a hard reset is safe
   # and avoids a merge conflict blocking a deploy.
@@ -277,7 +278,7 @@ else
   sha="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   git -C "$CLONE_DIR" -c commit.gpgsign=false commit -q \
     -m "Deploy plugin $name ($archetype, sigma-plugin-kit $sha)"
-  echo "Pushing to $HOST_REPO ..." >&2
+  note "Pushing to $HOST_REPO ..."
   git -C "$CLONE_DIR" push -q origin main
   pushed=1
 fi

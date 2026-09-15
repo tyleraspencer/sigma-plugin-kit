@@ -116,7 +116,12 @@ PAGE = r"""<!doctype html>
 (function(){
   var P = __PAYLOAD__;
   var checks = [];
-  function add(name, ok, detail){ checks.push({name:name, ok:!!ok, detail:detail||''}); }
+  // `advisory` checks report but never fail the run. A gate is only worth
+  // blocking on if it has never been wrong: a false FAIL costs a debugging
+  // round and, worse, teaches you to stop believing the verdict.
+  function add(name, ok, detail, advisory){
+    checks.push({name:name, ok:!!ok, detail:detail||'', advisory:!!advisory});
+  }
 
   // --- Sigma host emulation -------------------------------------------------
   // A built plugin imports `client` from @sigmacomputing/plugin, so there is no
@@ -248,10 +253,20 @@ PAGE = r"""<!doctype html>
       return l && bLower.indexOf(String(l).toLowerCase()) !== -1;
     });
     var enough = hits.length >= Math.min(2, P.labels.length);
+    // ADVISORY, demoted 2026-09-15. It reads innerText for raw label strings,
+    // which a plugin that identifies by hover (a swarm, a map, anything dense)
+    // legitimately never prints -- and innerText collapses whitespace, so a
+    // label containing a double space can never match even when it IS drawn.
+    // It false-FAILed `price-swarm` twice and both times the plugin was right
+    // and the check was wrong. `binds-vs-fallback` already catches the failure
+    // that matters (rendering the fallback instead of the data); this one only
+    // adds confidence when it passes.
     add('bound-values-visible', enough,
         enough ? hits.length + '/' + P.labels.length + ' bound label(s) appear in B'
-               : 'none of the bound labels appear in B (' +
-                 P.labels.slice(0,3).join(', ') + '…)');
+               : 'no bound label strings found in the render (advisory -- '
+                 + 'expected for a plugin that identifies on hover, or whose '
+                 + 'labels contain repeated whitespace)',
+        true);
 
     // The plugin must fill whatever box it is given, at any size. Static
     // analysis cannot tell a root container from a leaf without guessing, so
@@ -321,17 +336,22 @@ PAGE = r"""<!doctype html>
   }
 
   function render(){
-    var pass = checks.every(function(c){ return c.ok; });
+    var blocking = checks.filter(function(c){ return !c.advisory; });
+    var pass = blocking.every(function(c){ return c.ok; });
+    var notes = checks.filter(function(c){ return c.advisory && !c.ok; }).length;
     document.title = pass ? 'HARNESS PASS' : 'HARNESS FAIL';
     var v = document.getElementById('verdict');
     v.className = 'verdict ' + (pass ? 'pass' : 'fail');
-    v.textContent = pass ? 'PASS — renders bound data' : 'FAIL — see below';
+    v.textContent = (pass ? 'PASS — renders bound data' : 'FAIL — see below')
+      + (notes ? ' (' + notes + ' advisory)' : '');
     document.getElementById('checks').innerHTML = checks.map(function(c){
-      return '<tr><td class="s">' + (c.ok ? '✅' : '❌') + '</td>' +
-             '<td class="n">' + c.name + '</td>' +
+      var mark = c.ok ? '✅' : (c.advisory ? '➖' : '❌');
+      return '<tr><td class="s">' + mark + '</td>' +
+             '<td class="n">' + c.name + (c.advisory ? ' <em>(advisory)</em>' : '') + '</td>' +
              '<td class="d">' + c.detail + '</td></tr>';
     }).join('');
-    window.__HARNESS__ = { pass:pass, checks:checks, rowCount:P.rowCount, name:P.name };
+    window.__HARNESS__ = { pass:pass, checks:checks, advisoryFailed:notes,
+                           rowCount:P.rowCount, name:P.name };
   }
 
   frames.forEach(function(f){ f.el.src = P.pluginUrl; });
@@ -468,15 +488,13 @@ def main():
                    encoding="utf-8")
 
     url = "http://localhost:%d/_harness/%s.html" % (args.port, args.name)
-    print("harness: %s" % out.relative_to(REPO))
-    print("  data:  %s" % described)
-    print("  binds: %s" % ", ".join("%s=%s" % (n, cfg[n]) for n in binding_names))
-    print()
-    print("Serve the plugins directory, then open the harness:")
-    print("  npx serve -l %d %s" % (args.port, (REPO / "plugins")))
-    print("  %s" % url)
-    print()
-    print("PASS/FAIL lands in the page, in document.title, and in window.__HARNESS__.")
+    # Two lines: what it bound, and the URL to open. The serve command and the
+    # where-the-verdict-lands note were nine lines of instructions reprinted on
+    # every iteration; they live in docs/plugins.md -> "The two gates" now.
+    print("harness: %s | %s | binds %s"
+          % (out.relative_to(REPO), described,
+             ", ".join("%s=%s" % (n, cfg[n]) for n in binding_names)))
+    print("  %s   (npx serve -l %d %s)" % (url, args.port, REPO / "plugins"))
     return 0
 
 

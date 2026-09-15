@@ -78,10 +78,18 @@ name=""
 title=""
 mode="auto"
 adopt_wb=""
+ship=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --) shift; break ;;
     --redeploy|--fast) mode="redeploy"; shift ;;
+    # The small-update path: build + deploy + confirm the registration, and
+    # nothing else. The gates cost 0.25s between them, so this does NOT buy
+    # wall clock -- the only real wait in a deploy is GitHub Pages. What it
+    # buys is fewer moving parts when you already know what you changed: no
+    # harness to regenerate and open, and no static check that can block a
+    # one-line style tweak. Use --redeploy when you want the gates.
+    --ship) mode="redeploy"; ship=1; shift ;;
     --update-workbook) mode="update-workbook"; shift ;;
     --new-workbook) mode="new-workbook"; shift ;;
     --workbook-id)
@@ -116,13 +124,25 @@ esac
 
 [ -n "$adopt_wb" ] && [ "$mode" = "auto" ] && mode="update-workbook"
 
-say() { printf '\n\033[1m== %s\033[0m\n' "$1" >&2; }
+
+# One line per step, no leading blank. Seven bold banners separated by blank
+# lines is fourteen lines of structure around about six lines of content.
+say()  { printf '\033[1m== %s\033[0m\n' "$1" >&2; }
+# Steps are counted, not numbered by hand: --ship drops two of them, and a
+# hardcoded "2/5 preflight" on a run that never preflights is worse than no
+# label at all.
+step=0
+next_step() { step=$((step + 1)); say "$step/$total $1"; }
+# Routine progress that is only interesting when you are debugging the
+# pipeline itself. Errors and results never go through this.
+note() { [ -n "${SIGMA_VERBOSE:-}" ] && printf '  %s\n' "$1" >&2 || true; }
 
 # Step 5 runs under --redeploy too. It is usually free -- the registration is
 # read from cache -- and it is the check that catches the URL you just deployed
 # to no longer being the URL Sigma has on file, which is otherwise invisible.
 total=7
 [ "$mode" = "redeploy" ] && total=5
+[ -n "$ship" ] && total=3
 
 # --- deploy state ---------------------------------------------------------
 # What a re-run needs to know and cannot cheaply re-derive: which pluginId this
@@ -158,9 +178,9 @@ state_set() { # state_set <key> <value>
 }
 
 # --- 1. scaffold ----------------------------------------------------------
-say "1/$total build"
+next_step "build"
 if [ -f "plugins/$name/package.json" ]; then
-  echo "  plugins/$name exists -- using it as-is" >&2
+  note "plugins/$name exists -- using it as-is"
 elif [ "$mode" = "redeploy" ]; then
   echo "pipeline: --redeploy but plugins/$name does not exist yet." >&2
   echo "  There is nothing to redeploy. Run without --redeploy to build it." >&2
@@ -187,7 +207,14 @@ done
 # fallback data and screenshots perfectly -- so none of them is caught by a
 # status code. Blocking on purpose: deploy and register cannot be undone,
 # because PATCH /v2/plugins/{id} cannot change a plugin's url.
-say "2/$total preflight"
+if [ -n "$ship" ]; then
+  # Said out loud, every time. A skipped gate you forgot about is how a
+  # plugin ships broken, and --ship is meant for changes you are sure of, not
+  # for changes you have not looked at.
+  printf '\033[1m== ship\033[0m  preflight + bind harness skipped\n' >&2
+fi
+if [ -z "$ship" ]; then
+next_step "preflight"
 if ! "${SIGMA_PYTHON:-python3}" scripts/preflight-plugin.py "$name" \
        ${data_file:+--data "$data_file"} >&2; then
   echo "" >&2
@@ -196,6 +223,7 @@ if ! "${SIGMA_PYTHON:-python3}" scripts/preflight-plugin.py "$name" \
   echo "  Override with SIGMA_SKIP_PREFLIGHT=1 if you know better." >&2
   [ -n "${SIGMA_SKIP_PREFLIGHT:-}" ] || exit 1
   echo "  SIGMA_SKIP_PREFLIGHT set -- continuing anyway." >&2
+fi
 fi
 
 # --- 3. bind harness ------------------------------------------------------
@@ -211,7 +239,8 @@ fi
 # renders bound data never ran on the one run where the plugin was new.
 # Building here costs nothing at step 4, which stamps the source hash and
 # skips a build it has already done.
-say "3/$total bind harness"
+if [ -z "$ship" ]; then
+next_step "bind harness"
 if [ -n "${SIGMA_SKIP_BINDTEST:-}" ]; then
   echo "  SIGMA_SKIP_BINDTEST set -- skipped" >&2
 else
@@ -225,15 +254,16 @@ else
     "${SIGMA_PYTHON:-python3}" scripts/verify-plugin-binding.py "$name" \
       ${data_file:+--data "$data_file"} >&2 || true
   else
-    echo "  build failed -- skipping the harness; step 4 reports why." >&2
+    echo "  build failed -- skipping the harness; the deploy step reports why." >&2
   fi
+fi
 fi
 
 # --- 4. deploy ------------------------------------------------------------
 # SIGMA_PREFLIGHT_DONE: deploy-plugin.sh runs its own preflight, because it is
 # callable on its own and that is exactly how a broken plugin shipped once.
 # Step 2 just ran the full one, with --data, so tell it not to repeat itself.
-say "4/$total deploy"
+next_step "deploy"
 url="$(SIGMA_PREFLIGHT_DONE=1 SIGMA_PLUGIN_SRC_HASH="${src_hash:-}" \
        bash scripts/deploy-plugin.sh "$name")"
 echo "  $url" >&2
@@ -243,13 +273,13 @@ echo "  $url" >&2
 # and the URL it registered is still the URL we just deployed to, the
 # registration cannot have changed -- `url` is the one field PATCH refuses to
 # touch. Skipping the lookup is two fewer API calls on every re-run.
-say "5/$total register"
+next_step "register"
 cached_pid="$(state_get plugin_id)"
 cached_reg_url="$(state_get plugin_url)"
 registration_url="$url"
 if [ -n "$cached_pid" ] && [ "$cached_reg_url" = "$url" ]; then
   pid="$cached_pid"
-  echo "  cached registration for this URL -> $pid" >&2
+  note "cached registration for this URL -> $pid"
 elif pid="$(bash scripts/api/register-plugin.sh id-for "$title" 2>/dev/null)" && [ -n "$pid" ]; then
   echo "  reusing existing registration for '$title' -> $pid" >&2
   registered_url="$(bash scripts/api/register-plugin.sh get "$pid" 2>/dev/null \
@@ -300,7 +330,7 @@ if [ "$mode" = "redeploy" ]; then
 fi
 
 # --- 6. workbook ----------------------------------------------------------
-say "6/$total workbook"
+next_step "workbook"
 target_wb="$adopt_wb"
 [ -n "$target_wb" ] || target_wb="$(state_get workbook_id)"
 
@@ -387,7 +417,7 @@ fi
 # against a warehouse source publishes fine and then compiles to
 # 'Unknown column "[X]"' in the SQL, with no error anywhere -- so check the
 # compiled SQL, not just the status code.
-say "7/$total verify"
+next_step "verify"
 cached_wb_url="$(state_get workbook_url)"
 if [ "$verb" = "none" ] && [ -n "$cached_wb_url" ]; then
   # Nothing was published, and the last run verified this exact spec against

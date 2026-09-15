@@ -34,12 +34,26 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 # Matches doctor.sh so the two read as one tool.
 
 class Report:
-    def __init__(self):
+    """Quiet unless something is wrong.
+
+    Twelve `[ok]` lines are twelve lines nobody reads, printed on every
+    iteration of a loop whose whole point is to be fast. A passing check has
+    exactly one thing to say -- that it passed -- and the count says it for all
+    of them. Failures and warnings still print in full, because those are the
+    only lines with information in them. `-v` brings the list back.
+    """
+
+    def __init__(self, verbose=False):
         self.failed = 0
         self.warned = 0
+        self.passed = 0
+        self.skipped = 0
+        self.verbose = verbose
 
     def ok(self, name, detail=""):
-        print("  [ok]   %-24s %s" % (name, detail))
+        self.passed += 1
+        if self.verbose:
+            print("  [ok]   %-24s %s" % (name, detail))
 
     def warn(self, name, detail=""):
         self.warned += 1
@@ -50,7 +64,9 @@ class Report:
         print("  [FAIL] %-24s %s" % (name, detail))
 
     def skip(self, name, detail=""):
-        print("  [skip] %-24s %s" % (name, detail))
+        self.skipped += 1
+        if self.verbose:
+            print("  [skip] %-24s %s" % (name, detail))
 
 
 def load_builder():
@@ -454,6 +470,8 @@ def main():
     ap.add_argument("name", help="plugin directory name under plugins/")
     ap.add_argument("--data", help="the rows the workbook will be built from; "
                                    "enables the binding-name check")
+    ap.add_argument("-v", "--verbose", action="store_true",
+                    help="list every check, not just the ones with something to say")
     args = ap.parse_args()
 
     plugin_dir = REPO / "plugins" / args.name
@@ -468,9 +486,10 @@ def main():
               % plugin_dir, file=sys.stderr)
         return 2
 
-    print("== preflight: %s ==" % args.name)
-    print("  source: %s" % src_file.relative_to(REPO))
-    print()
+    if args.verbose:
+        print("== preflight: %s ==" % args.name)
+        print("  source: %s" % src_file.relative_to(REPO))
+        print()
 
     raw = src_file.read_text(encoding="utf-8", errors="replace")
     # The script-tag checks only make sense against the served HTML, which for
@@ -482,7 +501,7 @@ def main():
     # markup, and a <script src> can't hide in a comment that matters.
     src = strip_comments(raw)
 
-    rep = Report()
+    rep = Report(verbose=args.verbose)
     check_react_archetype(rep, plugin_dir, strip_comments(html))
     check_sdk_global(rep, src)
     check_resize_observer(rep, src)
@@ -495,16 +514,16 @@ def main():
     check_viewport_units(rep, src)
     check_flex_min_height(rep, src)
 
-    print()
     if rep.failed:
+        print()
         print("  %d check(s) FAILED -- fix before deploying. Deploy and register "
               "are the\n  irreversible steps: PATCH /v2/plugins/{id} cannot change "
               "a plugin's url." % rep.failed)
         return 1
-    print("  all checks passed%s" % (" (%d warning(s))" % rep.warned if rep.warned else ""))
-    print("  Static checks cannot prove the plugin renders bound data. For that:")
-    print("    python3 scripts/verify-plugin-binding.py %s%s"
-          % (args.name, " --data %s" % args.data if args.data else ""))
+    print("preflight %s: %d ok%s%s"
+          % (args.name, rep.passed,
+             ", %d skipped" % rep.skipped if rep.skipped else "",
+             ", %d warning(s)" % rep.warned if rep.warned else ""))
     return 0
 
 
