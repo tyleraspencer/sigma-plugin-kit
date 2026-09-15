@@ -13,6 +13,38 @@ workbook-manifest.py, harvest-workbook.sh, the Cowork/Cortex skill-packaging
 harness, and 12 of validate-spec.py's checks) has since been removed as
 unused here.
 
+Some of that code is in turn adapted from Sigma's own reference skill pair,
+distributed as dated zip releases rather than a repository:
+
+    sigma-api / sigma-workbooks  (Sigma Computing)
+    delivered as sigma-workbook-skills-<YYYY-MM-DD>.zip
+
+Ported from it: scripts/api/verify-workbook.sh (near-verbatim, rewired to
+_env.sh + sigma_curl), scripts/api/browser-login.sh (the OAuth
+authorization-code + PKCE flow, then extended here with the headless
+--start/--finish phases that Claude Cowork's sandboxed bash needs and upstream
+has no equivalent of), and several of validate-spec.py's checks plus its YAML
+support.
+
+UPSTREAM SYNC STATE. Because releases arrive as same-named dated zips, which
+one a port came from is easy to lose -- record it here on every sync.
+
+  * Ports made on or before 2026-08-03: release not recorded. Their in-file
+    notes predate the 2026-08-07 zip, so they came either from an earlier
+    release or via ryan-workbook-skill, which vendors the same code.
+  * 2026-09-15: reviewed against the 2026-08-07 release. Cherry-picked two
+    facts into docs/elements-known-good.md (pluginId is unvalidated on write;
+    the canonical and plural column-binding forms). Nothing else adopted --
+    this kit's own findings on the document envelope, flat document.elements,
+    grouped-element binding and asset versioning are ahead of it. That
+    release is now installed separately as a personal skill for authoring
+    ordinary workbooks; it is deliberately NOT vendored here, since this kit
+    generates only the one page that hosts a plugin.
+  * A 2026-06-11 zip also exists. It is stale and WRONG on the spec's most
+    load-bearing point -- it teaches elements nested under pages[] and no
+    document envelope, both of which the API now rejects outright. Do not
+    port from it.
+
 Plugin conventions -- the synthetic-fallback idea and POST /v2/plugins
 registration -- were derived from:
 
