@@ -134,7 +134,7 @@ plugin_build_if_stale() {
     # there. It is one hash of one file, and it is what brings a dist built
     # before plugin_version_assets existed up to date without a rebuild.
     plugin_version_assets "$src/dist"
-    echo "  dist/ is current for $name -- skipped the build." >&2
+    [ -n "${SIGMA_VERBOSE:-}" ] && echo "  dist/ is current for $name -- skipped the build." >&2 || true
     return 0
   fi
 

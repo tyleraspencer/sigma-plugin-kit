@@ -937,10 +937,13 @@ def issues_plugin_owns_its_actions(spec: dict) -> list[tuple[str, str]]:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        sys.stderr.write("usage: validate-spec.py <spec.json|spec.yaml>\n")
+    args = [a for a in sys.argv[1:] if a not in ("-v", "--verbose")]
+    verbose = len(args) != len(sys.argv) - 1
+    if len(args) != 1:
+        sys.stderr.write("usage: validate-spec.py [-v] <spec.json|spec.yaml>\n")
         sys.exit(2)
-    spec = _load_spec(sys.argv[1])
+    sys.argv = [sys.argv[0], args[0]]
+    spec = _load_spec(args[0])
 
     root = _parse_layout(spec.get("layout", ""))
 
@@ -977,8 +980,13 @@ def main() -> None:
     )
 
     if not all_issues:
-        print(f"validate-spec: {sys.argv[1]} — all {len(CHECKS)} checks passed")
-        print(limitations)
+        # One line. The limitations paragraph below is real and worth reading
+        # once, but printed on every clean run it is five lines of prose in
+        # front of the next command -- so it waits for -v, or for a failure,
+        # where it is actually load-bearing.
+        print(f"validate-spec: all {len(CHECKS)} checks passed — {args[0]}")
+        if verbose:
+            print(limitations)
         sys.exit(0)
 
     for level, tag, msg in all_issues:

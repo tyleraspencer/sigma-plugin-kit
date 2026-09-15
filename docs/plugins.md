@@ -56,88 +56,59 @@ and wide to check it before deploy.
 ### Why there is no hand-written-HTML archetype
 
 A single `index.html` pulling the SDK's UMD bundle off a CDN looks simpler and
-is a trap. React is an *external* of that bundle, and its factory calls
-`React.createContext` at module top level — so a page that loads the SDK
-without loading React **first** throws right there, before the bundle assigns
-anything. `window.SigmaPlugin` is left as a bare `{}` with zero keys,
-`SigmaPlugin.client` is `undefined`, the plugin takes its no-client branch, and
-it renders fallback data forever. The only symptom anywhere is one uncaught
-`u.createContext is not a function` in the iframe console. It looks perfectly
-correct in a screenshot.
-
-That is not a hypothetical: it shipped. Bundling the SDK as an npm dependency
+is a trap. React is an *external* of that bundle and its factory calls
+`React.createContext` at module top level, so loading the SDK without loading
+React **first** throws before the bundle assigns anything: `window.SigmaPlugin`
+stays a bare `{}`, `client` is `undefined`, the plugin takes its no-client
+branch and renders fallback data forever. The only symptom anywhere is one
+uncaught `u.createContext is not a function` in the iframe console, and it
+screenshots perfectly. It shipped that way once. Bundling the SDK from npm
 makes the failure unrepresentable, so the archetype was removed rather than
-documented around. `preflight-plugin.py`, `deploy-plugin.sh` and CI each refuse
-a plugin that isn't a React project.
+documented around; preflight, deploy and CI each refuse a non-React plugin.
+Plugins deployed under the old archetype keep serving, but cannot be
+re-deployed until ported.
 
-Plugins deployed under the old archetype keep serving from their existing URLs
-— nothing was taken down — but they cannot be re-deployed until they're ported.
-
-**The complete API — all 14 editor-panel types, the client surface, variables,
-actions, interactions, and the help-center's own errors — is in
-[plugin-api.md](plugin-api.md).** Read that rather than the help centre; the
-help pages document about a third of the API and get several details wrong.
-
-The three things that matter most in any plugin:
+**The complete API is in [plugin-api.md](plugin-api.md)** — all 14 panel types,
+the client surface, variables, actions, interactions, and which help-center
+pages are wrong. Read that, not the help centre. The four things that matter in
+every plugin:
 
 ```js
-// 1. Declare the panel, at module scope. Each `name` is the config key AND the
-//    key a workbook spec's plugin `config` must use.
-client.config.configureEditorPanel([
+import { client, useConfig, useElementData } from '@sigmacomputing/plugin';
+
+client.config.configureEditorPanel([          // module scope, once
   { type: 'element', name: 'source' },
   { type: 'column', name: 'label', source: 'source', allowMultiple: false,
     allowedTypes: ['text'] },
 ]);
-
-// 2. React to config, re-subscribing when the bound element changes.
-client.config.subscribe(cfg => { /* ... */ });
-client.elements.subscribeToElementData(cfg.source, data => { /* ... */ });
 ```
 
+- **Import `client`; never reach for a window global.** `window.sigmaComputing`
+  is defined by no published bundle, and `window.SigmaPlugin` only exists under
+  a UMD script tag. Both read `undefined`; `sdk-global` fails on either.
 - `column` requires **both** `source` and `allowMultiple`. `allowedTypes` is an
-  **allowlist** (the help page says "prevent", and misspells it `allowTypes`).
-- Data arrives **keyed by column ID** — an object of parallel arrays, not row
-  objects. Zip by index. Capped at **25,000 values**; past that use
-  `subscribeToIncrementalElementData`.
-- Always release the previous element subscription before opening a new one, or
-  re-binding leaks a listener that overwrites state with the old element's rows.
-- **3. A synthetic fallback**, so the frame is never blank in the editor. Keep
-  it deterministic — a plugin that reshuffles every render can't be
-  screenshotted or eyeballed for regressions — and badge it visibly so nobody
-  mistakes it for real data.
+  **allowlist** (the help page says "prevent" and misspells it `allowTypes`).
+- Data arrives **keyed by column id** — parallel arrays, not row objects; zip by
+  index. Capped at **25,000 values**; past that use
+  `subscribeToIncrementalElementData`. Release the previous element
+  subscription before opening a new one, or re-binding leaks a listener that
+  overwrites state with the old element's rows.
+- Ship a **deterministic, badged synthetic fallback** so the frame is never
+  blank in the editor and nobody mistakes it for real data.
 
 Renaming a panel entry's `name` silently unbinds every workbook using it.
 
-**Import `client` from the package — never reach for a window global.**
+**Iterate against a dev URL** rather than redeploying: `npm run dev` (Vite,
+5173 — the `devUrl` every registration gets), then the element's **•••** menu →
+**Point to Development URL**. Edits hot-reload; changing panel *options* means
+re-entering the panel values.
 
-```js
-import { client, useConfig, useElementData } from '@sigmacomputing/plugin';
-```
-
-`window.sigmaComputing.plugin.client` is widely copied and defined by no
-published bundle. `window.SigmaPlugin` *is* real, but it only exists when the
-UMD build is loaded from a script tag — which a bundled plugin never does, so
-either global appearing in your source means code was pasted from a
-single-file example and will read `undefined` at runtime.
-`preflight-plugin.py`'s `sdk-global` check fails on both.
-
-**Iterate against a dev URL** rather than redeploying: `npm run dev` (Vite, port
-5173 — the default `devUrl` Sigma registers), then in the workbook use the
-element's **•••** menu → **Point to Development URL**. Changes hot-reload;
-changing editor-panel *options* means re-entering the panel values.
-
-When you do redeploy, redeploy *only*:
-
-```bash
-bash scripts/pipeline.sh my-viz --redeploy     # stops before the workbook
-```
-
-An edit inside the bundle changes neither the `pluginId` nor the workbook
-spec, so steps 6–7 have no work to do — and re-running them used to POST a
-second workbook with a second URL every single time. If the panel, bindings or
-data *did* change, re-run the full command with the same flags: the
+When you do ship, ship *only* the bundle — `--ship` for a change you are sure
+of, `--redeploy` to run the gates first. Both stop before the workbook, because
+a bundle edit changes neither the `pluginId` nor the spec. If the panel,
+bindings or data changed, re-run the full command with the same flags: the
 regenerated spec is byte-compared against the one last published, and a real
-difference is PUT into the same workbook rather than posted as a new one. See
+difference is PUT into the same workbook. →
 `skills/sigma-plugin-pipeline/SKILL.md` → "Editing after the first build".
 
 ## 2. Deploy
@@ -173,42 +144,35 @@ lands, so the script polls rather than trusting the push.
 
 ### Why a deploy can look like it never happened
 
-Pages serves both `index.html` and the bundle with `Cache-Control: max-age=600`,
-and plugin assets are **not** content-hashed (`vite.config.js` explains why: a
-hashed name 404s out of a cached `index.html` after a deploy replaces
-`dist/assets`). With a stable filename *and* a stable reference, a browser that
-already has `assets/index.js` cached renders the previous build from a fresh
-`index.html` for up to ten minutes — not a blank iframe, but the old plugin,
-looking exactly like a deploy that silently failed.
+Pages serves `index.html` and the bundle with `Cache-Control: max-age=600`, and
+plugin assets are deliberately **not** content-hashed (a hashed name 404s out
+of a cached `index.html` once a deploy replaces `dist/assets` — `vite.config.js`
+has the detail). Stable filename *plus* stable reference means a browser
+holding `assets/index.js` renders the previous build from a fresh `index.html`
+for up to ten minutes: not a blank iframe, the *old plugin*, looking exactly
+like a deploy that silently failed.
 
-So the build stamps the reference instead of the file:
+So the build stamps the reference, not the file:
 
 ```html
 <script type="module" src="./assets/index.js?v=1a2b3c4d"></script>
 ```
 
-`plugin_version_assets` in `scripts/_plugin-build.sh` does this after every
-build *through the pipeline* — and on the skipped-build path too, so an older
-`dist/` is brought up to date without a rebuild. It is idempotent, and it
-leaves a reference it cannot resolve on disk exactly as the build wrote it.
+`plugin_version_assets` (`scripts/_plugin-build.sh`) does this after every build
+through the pipeline, and on the skipped-build path too, so an older `dist/` is
+brought up to date without a rebuild. It lives in the shell helper rather than
+`vite.config.js` because that config is copied into each plugin at scaffold
+time — a config-based version would reach only *new* plugins. The trade: a bare
+`npm run build` inside a plugin directory leaves an unversioned `index.html`,
+which is harmless since `deploy-plugin.sh` re-stamps on every path before
+pushing. `assets_match` fetches the reference **with** its query, the URL the
+iframe really requests, and strips it to find the local file to compare.
 
-It lives in the shell helper rather than in `vite.config.js` deliberately:
-`vite.config.js` is copied into each plugin at scaffold time, so a config-based
-version would only ever reach *new* plugins, while the helper reaches every
-existing one immediately. The trade is that a bare `npm run build` inside a
-plugin directory produces an unversioned `index.html` — harmless, because
-`deploy-plugin.sh` routes through the helper on every path and re-stamps
-before it pushes. `assets_match` in
-`deploy-plugin.sh` fetches the reference **with** its query — the URL the
-iframe will actually request — and strips the query to find the local file to
-compare against.
-
-The worst case is now "an `index.html` up to ten minutes old, naming bytes that
-are exactly the build it came from": consistent, never a 404, self-healing.
-Only `index.html` itself can be stale, and it expires on its own.
+Worst case is now an `index.html` up to ten minutes old naming exactly the
+bytes it shipped with: consistent, never a 404, self-healing.
 
 **If you are staring at an old build right now**, that ten minutes is the
-answer. A hard reload of the *workbook* does not fix it — Sigma creates the
+answer — and a hard reload of the *workbook* does not fix it. Sigma builds the
 plugin iframe from JavaScript, and a script-inserted iframe issues an ordinary
 fetch that does not inherit the reload's cache-bypass. Open the plugin URL as a
 top-level page, hard-reload that, then reload the workbook.
@@ -308,149 +272,31 @@ message that blames the element kind rather than the field:
 ### Data: generated to fit the plugin
 
 Three sources, in priority order. **There is deliberately no built-in row
-set** — a generic default ("Alice Johnson", "SCORE") is the thing everyone
-falls into and nobody notices is meaningless.
+set** — a generic default ("Alice Johnson", "SCORE") is what everyone falls
+into and nobody notices is meaningless. With none of the three, the generator
+errors rather than inventing something.
 
-**1. `--data FILE` — rows you invent. Prefer this.** A `.csv`/`.tsv` or a JSON
-array of objects; types are inferred per column, and `'` escapes to `''`.
-Make them mean something for the plugin at hand: brands or product families
-for a ranking chart, funnel stages for a funnel, store regions for a map.
-Keep them in the Plugs Electronics retail world — no sports, teams or leagues,
-so an example and a real binding share a vocabulary.
+**1. `--data FILE` — rows you invent. Prefer this.** `.csv`/`.tsv` or a JSON
+array of objects; types inferred per column, `'` escaped to `''`. Make them
+mean something for the plugin at hand, and stay in the Plugs Electronics
+retail world — no sports, teams or leagues — so examples and real bindings
+share a vocabulary.
 
-```bash
-python3 scripts/build-plugin-workbook.py --name "Brand Revenue" \
-  --plugin-id "$PID" --data brands.csv
-```
-
-**2. `--plugin-src PATH` — columns read off the plugin itself.** The generator
-parses the plugin's `configureEditorPanel`, takes its column bindings and
-their `allowedTypes`, and synthesizes correctly-typed columns *named to match*.
-`pipeline.sh` passes this automatically, so a bare run always produces data
-the plugin can bind.
-
-For `brand-bars`, whose panel declares `brand` and `value`:
-
-```sql
-SELECT
-  v.c1::varchar AS BRAND,
-  v.c2::float AS VALUE
-FROM (VALUES
-  ('Brand A', 4200.0),
-  ('Brand B', 3283.0)
-) AS v(c1, c2)
-```
-
-...and the plugin config comes out as `{"brand": "col-brand", "value": "col-value"}`
-with no `--label-key` needed. Every column binding the panel declares gets
-bound, so a plugin wanting lat/long/tooltip gets all three.
-
-The values are visibly placeholders — the *shape* is right, the meaning
-isn't. That's the trade: it always binds, and it always looks like sample data.
+**2. `--plugin-src PATH` — columns read off the plugin.** Parses the plugin's
+`configureEditorPanel` and synthesizes correctly-typed columns *named to
+match*, so every declared binding binds with no `--label-key`. `pipeline.sh`
+passes it automatically. The values are visibly placeholders ("Brand A"): the
+shape is right, the meaning isn't.
 
 **3. `--path DB SCHEMA TABLE` — a real warehouse table**, grouped by
 `--dimension` with `--measure` aggregated over it. Measure expressions take
-bare column names and get qualified to `[TABLE/COLUMN]`, which matters because
-a bare `[PRICE]` publishes with HTTP 200 and compiles to `Unknown column`.
-Generated mode needs no grouping at all — you control the rows, so emit them
-pre-aggregated, one per category.
+bare column names and are qualified to `[TABLE/COLUMN]` for you — a bare
+`[PRICE]` publishes 200 and compiles to `Unknown column`. Generated mode needs
+no grouping: emit rows pre-aggregated, one per category.
 
-With none of the three, the generator errors rather than inventing something.
-
-#### A grouped element has two levels, and the plugin must name one
-
-```json
-"source": { "kind": "element", "elementId": "tbl-data", "groupingId": "by-dim" }
-```
-
-**`groupingId` is not optional when the bound element has `groupings`.** Leave
-it out and the plugin reads "All source columns" — the element's *ungrouped*
-warehouse rows, capped at the SDK's 25,000, each repeating its group's
-aggregate. A five-region revenue plugin renders 25,000 rows of `West / 731.5M`
-while the very same element draws a correct five-row table underneath it,
-because the table reads the grouping and the plugin does not.
-
-Nothing else catches this. The spec validates. The element's own SQL compiles
-with its `GROUP BY` intact, so the `verify` step passes. Publish returns 200.
-The bind harness hands the plugin rows directly, so it never exercises this
-path at all. It has to be right when the spec is generated — which
-`build-plugin-workbook.py` now does, and `validate-spec.py`'s
-`plugin-refs-resolve` fails a spec that gets it wrong.
-
-The value matches the grouping's own `id`. The shape was confirmed by setting
-**Source grouping** in the editor panel and reading the spec back, not
-invented — the editor exposes the same choice as a dropdown, which is the
-manual fix for a workbook built before this was handled.
-
-`--data` rows are pre-aggregated (one row per category) so they produce no
-grouping, and no `groupingId` — correct, and the check stays quiet.
-
-#### Why the bundle is built at step 3, not step 4
-
-The bind harness drives the **built** bundle, because that is what Sigma
-loads. The only `npm run build` used to live inside `deploy-plugin.sh` at step
-4, one step after the harness — so on a *first* build step 3 found no `dist/`,
-printed "build it first" and no-opped past a `|| true`. The gate that proves a
-plugin renders bound rather than fallback data never ran on the one run where
-the plugin was new, which is the run where it matters.
-
-`scripts/_plugin-build.sh` now owns building, and both steps call it. It is
-content-addressed against the plugin's sources (`dist/`, `node_modules/` and
-`.git/` excluded, since they are outputs), so:
-
-- **step 3** builds when there is no `dist/`, or when the sources changed
-  since the one that is there. A stale `dist/` is worse than a missing one —
-  every downstream check then passes against code nobody edited.
-- **step 4** is handed the same hash and finds the work already done, so a
-  run costs one build, not two. `SIGMA_FORCE_BUILD=1` overrides.
-- a build that **fails** writes no stamp, so the next run rebuilds rather than
-  trusting the previous bundle.
-
-One subtlety worth keeping: `plugin_build_if_stale` checks `npm run build`'s
-exit status explicitly instead of relying on `set -e`. Callers invoke it
-inside an `if`, and errexit is suppressed for everything in a function called
-that way — without the explicit check a failed build falls through to the
-`dist/index.html` guard, finds the *previous* build's file, and stamps it as
-current.
-
-#### A published workbook needs a human
-
-**The spec API writes the workbook's draft, not its published version.** POST
-and PUT both create a new version that the owner sees on opening — and that
-everyone else does not, until someone clicks **Publish** in the UI. Send the
-URL straight out of `pipeline.sh` and your audience gets the previous
-published version, or an empty workbook if there has never been one.
-
-There is no API for this. Verified against Sigma's own reference on
-2026-09-12: `PUT /v2/workbooks/{workbookId}/spec` accepts `document` and an
-optional `documentVersion` and nothing else; `POST /v2/workbooks/spec` accepts
-`name`, `folderId`, `document`, `description`. Neither has a publish
-parameter. There is no `/publish` route on `/v2/workbooks`, `/v2/files` or
-`/v2/documents` — all 404 to both GET and POST — no `/versions` route, and
-`/tags` is GET-only. `?version=published` and `?version=draft` are accepted
-and ignored on `/spec` and `/elements`: every read returns current state, so
-the API cannot even *report* whether a draft is pending.
-
-So `pipeline.sh` prints a NOT PUBLISHED YET warning whenever it wrote a
-workbook, and stays quiet when it didn't. Two cases genuinely need nothing:
-
-- **`--redeploy`** — the spec is untouched, so no draft is created, and the
-  iframe fetches the new bundle on its next load. A bundle-only change reaches
-  viewers with nobody opening Sigma.
-- **an unchanged spec** — nothing was published, so nothing is pending.
-
-`documentVersion` on the PUT is worth knowing about for a different reason:
-"update only if the workbook is still at this document version". The kit does
-not send it, so a PUT will overwrite edits someone made in the UI since the
-last run.
-
-#### Binding more than two columns
-
-`--dimension`/`--measure` emit exactly two columns, which is not enough for a
-plugin whose panel declares more — a map wants zip, latitude, longitude *and*
-a measure. Name each one with `--bind KEY[:Display]=FORMULA`, keyed by its
-editor-panel binding name. A bare column reference goes to `groupBy`; an
-expression goes to `calculations`.
+**More than two columns** — a map wants zip, latitude, longitude *and* a
+measure — needs `--bind KEY[:Display]=FORMULA` per editor-panel binding. Bare
+column refs go to `groupBy`, expressions to `calculations`:
 
 ```bash
 bash scripts/pipeline.sh zip-map "ZIP Map" -- \
@@ -458,27 +304,75 @@ bash scripts/pipeline.sh zip-map "ZIP Map" -- \
   --bind zip:ZIP=STORE_ZIP_CODE \
   --bind "value:Revenue=Sum(PRICE * QUANTITY)" \
   --bind "latitude:Latitude=Max(STORE_LATITUDE)" \
-  --bind "longitude:Longitude=Max(STORE_LONGITUDE)" \
   --variable-control selectedZips --control-values /tmp/zips.txt
 ```
 
 **`--variable-control` with `--path` also needs `--control-values FILE`** (one
-value per line). A control's `source` must be `manual`, and with a warehouse
-source there are no rows in the spec to read the distinct values out of. Get
-them with the Sigma MCP `query` tool — `SELECT DISTINCT` against the
-connection, table referenced by its inodeId.
+per line): a control's `source` must be `manual`, and a warehouse source puts
+no rows in the spec to read distinct values from. Get them with the Sigma MCP
+`query` tool, table referenced by inodeId.
+
+#### A grouped element has two levels, and the plugin must name one
+
+```json
+"source": { "kind": "element", "elementId": "tbl-data", "groupingId": "by-dim" }
+```
+
+**`groupingId` is not optional when the bound element has `groupings`.** Omit
+it and the plugin reads the element's *ungrouped* rows — 25,000 of them, each
+repeating its group's aggregate — while the same element draws a correct
+five-row table underneath it. Nothing else catches it: the spec validates, the
+SQL compiles with its `GROUP BY` intact, publish returns 200, and the harness
+hands the plugin rows directly so it never exercises this path.
+`build-plugin-workbook.py` emits it, and `validate-spec.py`'s
+`plugin-refs-resolve` fails a spec that gets it wrong. The value is the
+grouping's own `id`; the editor exposes the same choice as **Source grouping**,
+which is the manual fix for an older workbook. `--data` rows are
+pre-aggregated, so they produce no grouping and need no `groupingId`.
+
+#### The bundle is built at step 3, not step 4
+
+The harness drives the **built** bundle, so the build has to precede it. It
+used to live in `deploy-plugin.sh` at step 4, which meant a first build found
+no `dist/` and no-opped past a `|| true` — the gate that proves a plugin
+renders bound data never ran on the one run where the plugin was new.
+
+`scripts/_plugin-build.sh` owns building now and both steps call it,
+content-addressed against the plugin's sources (`dist/`, `node_modules/`,
+`.git/` excluded). Step 3 builds when `dist/` is missing or stale, step 4 finds
+the work done, so a run costs one build. `SIGMA_FORCE_BUILD=1` overrides, and a
+failed build writes no stamp so the next run retries. `plugin_build_if_stale`
+checks `npm run build`'s exit status explicitly: callers invoke it inside an
+`if`, which suppresses errexit for the whole function, and without that check a
+failed build falls through and stamps the *previous* bundle as current.
+
+#### A published workbook needs a human
+
+**The spec API writes the workbook's draft, not its published version.** POST
+and PUT create a version the owner sees on opening and nobody else does until
+someone clicks **Publish**. Hand over a fresh `pipeline.sh` URL and your
+audience gets the previous published version, or an empty workbook.
+
+There is no API for it (verified 2026-09-12): no publish parameter on
+`POST /v2/workbooks/spec` or `PUT /v2/workbooks/{id}/spec`, no `/publish` or
+`/versions` route on `/v2/workbooks`, `/v2/files` or `/v2/documents`, and
+`?version=published|draft` is accepted and ignored — so the API cannot even
+report that a draft is pending. `pipeline.sh` therefore prints NOT PUBLISHED
+YET whenever it wrote a workbook. Two cases need nothing: `--redeploy` (no
+draft created; the iframe fetches the new bundle on its next load) and an
+unchanged spec.
+
+`documentVersion` on the PUT means "only if still at this version". The kit
+does not send it, so **a PUT overwrites edits made in the UI since the last
+run** — and a PUT is not necessarily visible to an editor that already has the
+workbook open, so don't iterate this way against a workbook someone is looking
+at. POST a new one instead.
 
 #### The known-good real table
 
-`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB` in the Sigma Sample
-Database. Bind it as:
-
-```bash
---path RETAIL PLUGS_ELECTRONICS PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA
-```
-
-**The actual table name carries a `_DATA` suffix** — the short name resolves
-to nothing, with no error worth the name. Columns worth knowing:
+`RETAIL.PLUGS_ELECTRONICS.PLUGS_ELECTRONICS_HANDS_ON_LAB_DATA` in the Sigma
+Sample Database. **The `_DATA` suffix is part of the name** — the short one
+resolves to nothing, with no error worth the name.
 
 | | |
 | --- | --- |
@@ -487,9 +381,9 @@ to nothing, with no error worth the name. Columns worth knowing:
 | Time | `DATE` |
 | Geo | `STORE_ZIP_CODE`, `STORE_LATITUDE`, `STORE_LONGITUDE` |
 
-It is geocoded, which makes it the one to reach for whenever the plugin is
-map-shaped. It only exists in orgs that have the sample connection — check
-with `list-connections.sh` before offering it anywhere but the default org.
+Geocoded, so it is the one to reach for when the plugin is map-shaped. It only
+exists in orgs with the sample connection — check `list-connections.sh` before
+offering it outside the default org.
 
 ### Generated rows, and why input tables cannot be seeded
 
@@ -540,52 +434,68 @@ fallback is precisely what renders when nothing resolves.
 
 ### The two gates
 
-`pipeline.sh` runs both. Reach for them by hand while iterating.
-
 ```bash
-python3 scripts/preflight-plugin.py <name> [--data FILE]      # static, blocking
-python3 scripts/verify-plugin-binding.py <name> [--data FILE] # renders it twice
+python3 scripts/preflight-plugin.py <name> [--data FILE] [-v]  # static, blocking
+python3 scripts/verify-plugin-binding.py <name> [--data FILE]  # renders it twice
+npx serve -l 7824 plugins                 # then open the URL it printed
 ```
+
+Both are quiet: one summary line unless something has something to say. `-v`
+lists every check.
 
 **`preflight-plugin.py` is what stops a bad deploy.** Every check in it is a
 mode where the plugin deploys clean, publishes clean, renders its own fallback
 and screenshots perfectly — no status code catches any of them. It imports
 `build-plugin-workbook.py`'s *own* panel parser rather than re-implementing
 one, so authoring and building cannot silently disagree about the binding
-contract. With `--data` it also checks that every `column` binding name has a
-matching header, which is what makes all the bindings resolve instead of just
+contract. With `--data` it also checks every `column` binding name against a
+matching header, which is what makes all the bindings resolve rather than just
 the first two.
 
 **`verify-plugin-binding.py` is the only thing that proves the plugin renders
-bound data.** It generates a local page that runs the plugin twice in isolated
-iframes — once with nothing bound, once with real rows in Sigma's column-keyed
-parallel-array shape — and fails if the two renders are identical, because that
-means the plugin is ignoring its bindings. No Sigma login, no deploy, no
-network. It reports which declared bindings the plugin actually *read*, via a
-Proxy on the config object, and it **resizes the bound frame and measures
-whether the plugin's root follows** — a root pinned to a fixed height reads the
-same at both sizes and fails `fills-frame`.
+bound data.** It runs the plugin twice in isolated iframes — nothing bound, then
+real rows in Sigma's column-keyed parallel-array shape — and fails if the two
+renders are identical, because that means the bindings are being ignored. No
+Sigma login, no deploy, no network. It reports which bindings the plugin
+actually *read* (via a Proxy on the config object) and **resizes the bound frame
+to measure whether the plugin's root follows** — a root pinned to a fixed height
+reads the same at both sizes and fails `fills-frame`.
 
-The verdict lands in the page, in `document.title` (`HARNESS PASS` /
-`HARNESS FAIL`) and in `window.__HARNESS__`. Wait for the title to stop saying
-`HARNESS RUNNING`: read it early and the checks that had not finished yet look
-like failures.
+The verdict is in `document.title` (`HARNESS PASS` / `HARNESS FAIL`) and
+`window.__HARNESS__`. **Wait for the title to stop saying `HARNESS RUNNING`** —
+read it early and unfinished checks look like failures.
+
+Checks marked **advisory** report but never block: `bound-values-visible` looks
+for raw label strings in `innerText`, which a plugin that identifies on hover
+legitimately never prints, and `innerText` collapses whitespace so a label with
+a double space can never match. It false-FAILed a correct plugin twice. A gate
+is only worth blocking on if it has never been wrong — a false FAIL costs a
+debugging round and teaches you to stop believing the verdict.
+
+Two things the harness structurally **cannot** catch, so check them by hand:
+
+- **Blank until resized.** Its own `fills-frame` probe resizes the frame, which
+  is exactly the event a plugin with a mis-attached `ResizeObserver` needs in
+  order to render at all. Stub out the `probeFill` call in a copy of the
+  generated harness and confirm an `<svg>` appears with no resize.
+- **Variable writes and action triggers.** The generated `cfg` carries only
+  column bindings, so `if (config.pickX)` guards are all false and clicks are
+  inert. Add the keys to `P.cfg` in a copy, and push `wb:plugin:variable:set` /
+  `wb:plugin:action-trigger:invoke` onto an array to see the order they fire in.
 
 Escape hatches, for when a check is wrong rather than the plugin:
-`SIGMA_SKIP_PREFLIGHT=1`, `SIGMA_SKIP_BINDTEST=1`.
+`SIGMA_SKIP_PREFLIGHT=1` (runs it, does not stop on failure),
+`SIGMA_SKIP_BINDTEST=1`. `pipeline.sh --ship` skips both outright.
 
 ## Gotchas that cost a rebuild
 
 - **`url` is immutable on PATCH.** Deploy and verify, then register.
-- **A plugin sized to anything but 100% of its iframe is wrong.** It looks fine
-  in the one screenshot you took and clips or letterboxes for the author the
-  moment they resize the element. See "Build", above.
-- **Controls bind to a plugin directly** — declare a `variable` in the editor
-  panel and read/write it with `getVariable`/`setVariable`. It works in both
-  directions, so a plugin can also cross-filter the workbook by writing a
-  selection into a control. ([plugin-api.md](plugin-api.md) → "Variables".)
-  Earlier versions of this file told you to project a constant column with a
-  bare `[<controlId>]` formula and bind that; **that workaround is retracted.**
+- **A plugin sized to anything but 100% of its iframe is wrong** — fine in the
+  one screenshot you took, clipped the moment the author resizes the element.
+- **Controls bind to a plugin directly**, via a `variable` panel entry and
+  `getVariable`/`setVariable`, in both directions
+  ([plugin-api.md](plugin-api.md) → "Variables"). The old
+  project-a-`[<controlId>]`-column workaround is **retracted**.
 - **Re-publishing a harvested spec with an input table:** strip every system
   column (`ID`, `CREATED_AT`, `CREATED_BY`, `UPDATED_AT`, `UPDATED_BY`) back to
   a bare `{"id": ...}` first. Sigma adds a `formula` field to them on GET, and
