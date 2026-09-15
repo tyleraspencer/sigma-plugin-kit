@@ -71,7 +71,10 @@ colors replace the accent and its tint pair; the neutrals never move.
 **4. Whatever else actually changes the build**, and nothing that doesn't:
 
 - **Does clicking it do anything?** Cross-filtering needs a `variable` panel
-  entry wired to a workbook control — structural, not a later tweak.
+  entry wired to a workbook control; an *action* (writing a row, opening an
+  overlay, exporting) additionally needs an `action-trigger` entry. Both are
+  structural, not later tweaks — and see "A plugin owns its own actions" below,
+  which is not negotiable.
 - **What are the entities?** Brands, product families, store regions, funnel
   stages, SKUs. You need real names before you can write synthetic rows.
 - **Thresholds and rules** for anything computed — what counts as good, how a
@@ -402,6 +405,47 @@ bisect from a known-good shape one field at a time rather than inventing one.
 A *structural* complaint instead ("an action must have at least one effect")
 means that part parsed fine. → `docs/elements-known-good.md`, which has every
 verified shape, the known-rejected list, and the full decoder
+
+## A plugin owns its own actions
+
+**Standing rule from Tyler, 2026-09-15. An action a plugin causes must be
+triggered BY the plugin.** Not by a button the user presses afterwards, not by
+the `on-change` of a control the plugin wrote, not by any other native element
+standing in for the plugin. If the ask is "clicking the plugin does X", then
+clicking the plugin does X — a second click on something else is a different,
+worse feature.
+
+```
+plugin panel:   { type: 'action-trigger', name: 'onPick' }
+plugin code:    client.config.triggerAction(config.onPick)   // after the writes
+workbook spec:  plugin.config.onPick = {kind:"action-trigger", actionTriggerId: ID}
+                plugin.actions = [{trigger: {kind:"action-trigger",
+                                             actionTriggerId: ID}, effects: [...]}]
+```
+
+The action lives on the **plugin element**, and the id appears in both halves —
+`ID` is yours to invent (22 chars, base62) and round-trips unchanged. Shapes and
+the harvest they came from: `docs/elements-known-good.md` → "input-table, and
+insert-rows"; `docs/plugin-api.md` → "A plugin owns its own actions".
+
+**The trigger carries no payload**, so write the `variable` controls *first* and
+fire the trigger *last*. That ordering is what lets the action's effects read
+what was clicked.
+
+Both gates enforce this, so you cannot ship around it:
+
+- `preflight-plugin.py` → `action-trigger-wired`: a `triggerAction()` call
+  without a panel entry, or a panel entry never called.
+- `validate-spec.py` → `plugin-owns-its-actions`: an action whose effects read
+  controls the plugin writes but which is triggered by something other than that
+  plugin, plus either half of a trigger binding left dangling. It runs on every
+  `post`/`put`, so a delegated action does not publish.
+
+Why it is a rule rather than a preference: a control's `on-change` is
+**unverified** as a way to fire an action from a plugin's `setVariable` — the
+evidence from `price-swarm` is that it does not fire. That wiring publishes
+clean, validates clean, and silently never runs, which is indistinguishable
+from a broken plugin. A button works but answers a question nobody asked.
 
 ## Before you write a panel
 

@@ -497,6 +497,25 @@ def main():
             notes.append("plugin declares extra element bindings (%s) that this workbook "
                          "does not populate -- bind them by hand in Sigma"
                          % ", ".join(extra_elements))
+        # An action-trigger this generator leaves unbound is a plugin whose
+        # clicks silently do nothing -- and there is no flag that could bind it,
+        # because the EFFECT (which table, which columns, which values) is the
+        # part only the caller knows. Say so loudly rather than emit a workbook
+        # that looks finished. The rule this serves: an action a plugin causes
+        # is triggered BY the plugin, never by a button or a written control's
+        # on-change -- skills/sigma-plugin-pipeline/SKILL.md -> "A plugin owns
+        # its own actions", enforced by validate-spec.py's
+        # plugin-owns-its-actions.
+        triggers = [e.get("name") for e in entries
+                    if e.get("type") == "action-trigger"]
+        if triggers:
+            notes.append(
+                "plugin declares action-trigger(s) %s that this workbook does NOT "
+                "wire, so clicking it will fire nothing. Post-process the spec: "
+                "set config[<name>] = {kind:'action-trigger', actionTriggerId: ID} "
+                "and give the PLUGIN element an action whose trigger names the "
+                "same ID. Worked example: docs/examples/price-swarm-queue.py"
+                % ", ".join(repr(t) for t in triggers))
 
     rows = None
     colmap = {}

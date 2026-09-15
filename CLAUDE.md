@@ -30,7 +30,15 @@ agent editing this repo for some other reason doesn't step on one:
 - Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
 - A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px,
-  and guard the `ResizeObserver`. (`docs/plugin-api.md` → "Loading, sizing".)
+  and guard the `ResizeObserver`. Attach it from a **callback ref**: a mount
+  effect never sees the chart node a data-gated plugin mounts later, and the
+  plugin stays blank until the window is resized. (`docs/plugin-api.md` →
+  "Loading, sizing".)
+- **An action a plugin causes is triggered BY the plugin** — `action-trigger` +
+  `triggerAction()`, with the action on the plugin element. Never a button the
+  user presses afterwards, never a written control's `on-change`. Standing rule;
+  both gates enforce it (`action-trigger-wired`, `plugin-owns-its-actions`).
+  (`skills/sigma-plugin-pipeline/SKILL.md` → "A plugin owns its own actions".)
 - A plugin looks like a Sigma element or it looks embedded. Tokens, chart
   conventions and the five design principles as React decisions:
   `docs/design-system.md`. There is no theme API to read them from.
