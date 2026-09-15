@@ -35,7 +35,7 @@ QUEUE = "tbl-queue"
 # Opaque and Sigma-shaped (22 chars, base62). It only has to match between the
 # plugin's config and the trigger of the action on the plugin element -- that
 # pairing is the whole binding.
-TRIGGER_ID = "pSwarmPick0000000000Aa"
+TRIGGER_ID = "VclNQqKIJnRz4Pi4gJvA92"
 CONNECTION = "bee6615c-7d11-435c-8819-e32207b27fe4"  # proven to host input tables
 
 # (control id, element id, kind, panel label)

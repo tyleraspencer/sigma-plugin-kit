@@ -43,6 +43,7 @@ CHECKS = [
     "bare-ref-resolution",
     "action-refs-resolve",
     "plugin-refs-resolve",
+    "plugin-owns-its-actions",
     "warehouse-refs-qualified",
 ]
 
@@ -456,11 +457,11 @@ def issues_action_refs_resolve(spec: dict) -> list[tuple[str, str]]:
     `reference/specification/actions.md` notes a typo there is a silent no-op
     with nothing to validate against). `close-overlay` takes no reference.
 
-    Note this check says nothing about whether an effect is ACCEPTED. On
-    papercrane, `insert-rows`/`delete-rows`/`open-url` are rejected outright
-    at POST with `Invalid kind: "button"` -- see
-    docs/elements-known-good.md -> the effects table. A clean run here means
-    the references are internally consistent, not that the spec publishes.
+    Note this check says nothing about whether an effect is ACCEPTED. A clean
+    run here means the references are internally consistent, not that the spec
+    publishes. (`insert-rows` was long recorded here as rejected outright;
+    that was a wrong field name, retracted 2026-09-15 -- see
+    docs/elements-known-good.md -> "input-table, and insert-rows".)
     """
     issues = []
     all_elements = _all_elements(spec)
@@ -551,7 +552,21 @@ def issues_action_refs_resolve(spec: dict) -> list[tuple[str, str]]:
         # beside the other two with the same `table` field and the same
         # silent-no-op failure, so it is checked identically here.
         elif effect in ("insert-rows", "update-rows", "delete-rows"):
-            table_id = fx.get("table")
+            # The field is `tableElementId`. This check asked for `table` from
+            # the day it was written, so `table_id` was always None and the
+            # whole branch below never ran -- it reported clean on every
+            # row-mutating effect ever validated. `table` is not a legacy
+            # alias either: Sigma silently drops field names it does not know,
+            # so an effect naming `table` has no target at all and no-ops.
+            table_id = fx.get("tableElementId")
+            if table_id is None and fx.get("table"):
+                issues.append((
+                    "fail",
+                    f"{loc}: the target field is `tableElementId`, not `table`. "
+                    "Sigma drops unknown field names silently, so this effect "
+                    "publishes clean and then writes nothing."
+                ))
+                table_id = fx.get("table")
             table_el = elements_by_id.get(table_id)
             if table_id and (table_el is None or table_el.get("kind") != "input-table"):
                 issues.append((
@@ -775,6 +790,152 @@ def issues_warehouse_refs_qualified(spec: dict) -> list[tuple[str, str]]:
                 ))
     return issues
 
+def _controls_read_by_effects(effects) -> set[str]:
+    """Every control an effect READS, as opposed to writes.
+
+    A read is `{"type": "control", "control": X}` -- a value sourced from a
+    control -- or a `[X]` reference inside a formula. `set-control-value`'s own
+    `control` field is a bare string naming its target, which is a WRITE and
+    deliberately not collected: a native button that pushes a value into a
+    control the plugin also writes is not the anti-pattern this check is for.
+    """
+    found: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "control" and isinstance(node.get("control"), str):
+                found.add(node["control"])
+            if node.get("type") == "formula" and isinstance(node.get("formula"), str):
+                found.update(re.findall(r"\[([^\]/]+)\]", node["formula"]))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(effects or [])
+    return found
+
+
+def issues_plugin_owns_its_actions(spec: dict) -> list[tuple[str, str]]:
+    """An action driven by a plugin must be TRIGGERED BY that plugin.
+
+    Standing rule, set 2026-09-15 after it was got wrong on `price-swarm`:
+    when a plugin is the thing the user interacts with, the action it causes
+    fires from the plugin's own `action-trigger`, not from a native element
+    standing in for it. A button the user has to press afterwards is not the
+    interaction they asked for, and a control's `on-change` is worse -- it is
+    unverified that Sigma treats a plugin's `setVariable` as the kind of change
+    that fires a control action, so that wiring can publish clean, validate
+    clean, and simply never fire.
+
+    The tell is mechanical: an action whose effects READ controls the plugin
+    writes is an action the plugin is driving. If its trigger is anything other
+    than that plugin's `action-trigger`, the plugin is not in charge of it.
+
+    Also checks both halves of the trigger binding, which is the failure this
+    rule replaces one silent mode with another if left unvalidated:
+
+    - a `{kind: "action-trigger"}` in a plugin's `config` with no action on that
+      element naming the same `actionTriggerId` -- the plugin fires into
+      nothing;
+    - an action on a plugin element whose `actionTriggerId` appears in no
+      config value -- nothing can ever fire it.
+
+    Both publish with HTTP 200 and look, from the workbook, exactly like a
+    plugin whose clicks do not work.
+    """
+    issues = []
+    all_elements = _all_elements(spec)
+    control_ids = _collect_control_ids(spec)
+
+    # controlId -> plugin element id, for every control a plugin can write
+    plugin_controls: dict[str, str] = {}
+    # actionTriggerId -> (plugin element id, config key)
+    declared_triggers: dict[str, tuple[str, str]] = {}
+
+    for _, el in all_elements:
+        if not isinstance(el, dict) or el.get("kind") != "plugin":
+            continue
+        pid = el.get("id") or "(unnamed)"
+        for key, val in (el.get("config") or {}).items():
+            if isinstance(val, dict):
+                if val.get("kind") == "control" and val.get("controlId"):
+                    plugin_controls[val["controlId"]] = pid
+                elif val.get("kind") == "action-trigger" and val.get("actionTriggerId"):
+                    declared_triggers[val["actionTriggerId"]] = (pid, key)
+            # The bare form is accepted for controls too, and is what this
+            # kit emitted before the object form.
+            elif isinstance(val, str) and val in control_ids:
+                plugin_controls[val] = pid
+
+    if not plugin_controls and not declared_triggers:
+        return issues
+
+    wired_triggers: set[str] = set()
+
+    for pi, el in all_elements:
+        if not isinstance(el, dict):
+            continue
+        el_label = el.get("id") or "(unnamed)"
+        is_plugin = el.get("kind") == "plugin"
+        for ai, action in enumerate(el.get("actions", []) or []):
+            if not isinstance(action, dict):
+                continue
+            trigger = action.get("trigger")
+            trig_id = (trigger or {}).get("actionTriggerId") if isinstance(trigger, dict) else None
+            fires_from_plugin = bool(trig_id)
+            if trig_id:
+                wired_triggers.add(trig_id)
+                if trig_id not in declared_triggers:
+                    issues.append((
+                        "fail",
+                        f"elements[{pi}] ({el_label}).actions[{ai}]: trigger "
+                        f"`{trig_id}` appears in no plugin `config` value. Nothing "
+                        "can fire this action -- bind it as "
+                        f'`config.<panel name> = {{"kind": "action-trigger", '
+                        f'"actionTriggerId": "{trig_id}"}}` on the plugin element.'
+                    ))
+                elif declared_triggers[trig_id][0] != el_label:
+                    owner = declared_triggers[trig_id][0]
+                    issues.append((
+                        "fail",
+                        f"elements[{pi}] ({el_label}).actions[{ai}]: trigger "
+                        f"`{trig_id}` is declared by plugin `{owner}`, but this "
+                        "action is on a different element. Sigma fires a plugin "
+                        "trigger against actions on the plugin's OWN element."
+                    ))
+
+            read = _controls_read_by_effects(action.get("effects"))
+            driven = sorted(c for c in read if c in plugin_controls)
+            if driven and not (is_plugin and fires_from_plugin):
+                owner = plugin_controls[driven[0]]
+                on = trigger.get("on") if isinstance(trigger, dict) else trigger
+                issues.append((
+                    "fail",
+                    f"elements[{pi}] ({el_label}).actions[{ai}] reads control(s) "
+                    f"{', '.join('`%s`' % c for c in driven)}, which plugin "
+                    f"`{owner}` writes -- so the plugin is driving this action, "
+                    f"but it is triggered by `{on or 'this element'}` instead. "
+                    "Move the action onto the plugin element and trigger it from "
+                    "the plugin's own `action-trigger` "
+                    '(`trigger: {"kind": "action-trigger", "actionTriggerId": ...}`), '
+                    "so a click in the plugin is the whole interaction. "
+                    "docs/plugin-api.md -> 'A plugin owns its own actions'."
+                ))
+
+    for trig_id, (pid, key) in sorted(declared_triggers.items()):
+        if trig_id not in wired_triggers:
+            issues.append((
+                "fail",
+                f"plugin `{pid}` binds an action-trigger at `config.{key}` "
+                f"(`{trig_id}`) but no action on it declares that trigger. The "
+                "plugin will call triggerAction() and nothing will happen."
+            ))
+
+    return issues
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.stderr.write("usage: validate-spec.py <spec.json|spec.yaml>\n")
@@ -793,6 +954,7 @@ def main() -> None:
         ("bare-ref-resolution",       lambda: issues_bare_ref_resolution(spec)),
         ("action-refs-resolve",       lambda: issues_action_refs_resolve(spec)),
         ("plugin-refs-resolve",       lambda: issues_plugin_refs_resolve(spec)),
+        ("plugin-owns-its-actions",   lambda: issues_plugin_owns_its_actions(spec)),
         ("warehouse-refs-qualified", lambda: issues_warehouse_refs_qualified(spec)),
     ]:
         for level, msg in fn():

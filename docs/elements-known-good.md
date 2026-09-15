@@ -266,9 +266,14 @@ Sigma's own UI emits** and the only form that can carry a condition:
 
 Triggers seen on UI-authored workbooks, by element kind: `button` →
 `on-click`; `control` → `on-change`; `table`/`pivot-table`/`input-table`/chart
-→ `on-select`; `table` → `on-context-menu-click`. **A `control` with an
-`on-change` action is how a plugin's `setVariable` reaches an action** — the
-plugin writes a control, the control fires.
+→ `on-select`; `table` → `on-context-menu-click`. A **plugin** element takes a
+fifth form, `{"kind": "action-trigger", "actionTriggerId": "<id>"}`.
+
+> **A plugin's action uses that fifth form and no other.** An earlier version of
+> this line claimed a `control` with an `on-change` action was how a plugin's
+> `setVariable` reaches an action. That is retracted: it appears not to fire,
+> and it is now a `validate-spec.py` failure (`plugin-owns-its-actions`).
+> `docs/plugin-api.md` → "A plugin owns its own actions".
 
 ## input-table, and insert-rows
 

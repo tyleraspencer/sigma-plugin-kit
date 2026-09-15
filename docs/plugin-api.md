@@ -218,10 +218,52 @@ a control that other elements filter on. The lasso-map pattern —
 
 ## Actions
 
+### A plugin owns its own actions
+
+**Standing rule, 2026-09-15: an action a plugin causes is triggered BY the
+plugin.** Never by a button the user presses afterwards, never by the
+`on-change` of a control the plugin just wrote, never by any other native
+element standing in for it. "Clicking the plugin does X" means one click.
+
+Enforced by both gates — `preflight-plugin.py` → `action-trigger-wired` and
+`validate-spec.py` → `plugin-owns-its-actions` (the latter runs on every
+`post`/`put`, so a delegated action will not publish).
+
+The two alternatives, and why they are not options:
+
+- **A control's `on-change`.** It is unverified that Sigma treats a plugin's
+  `setVariable` as the kind of change that fires a control action, and the
+  evidence from `price-swarm` is that it does **not**. It publishes clean,
+  validates clean, and silently never fires — indistinguishable from a broken
+  plugin, which is how it cost a whole debugging round.
+- **A button.** It works, and it answers a question nobody asked. A click that
+  needs a second click somewhere else is a different feature.
+
+Both halves of the binding live in the spec and must name the same id, which is
+yours to invent (22 chars, base62, round-trips unchanged):
+
+```json
+"config": { "onPick": {"kind": "action-trigger", "actionTriggerId": "<ID>"} },
+"actions": [{ "id": "act-pick",
+              "trigger": {"kind": "action-trigger", "actionTriggerId": "<ID>"},
+              "effects": [ … ] }]
+```
+
+The action goes on the **plugin element** — Sigma fires a plugin trigger
+against actions on the plugin's own element. Harvested from the "OnLoad" plugin
+in papercrane (workbooks `43642ae4`, `57ba996f`), not guessed. Worked example:
+`docs/examples/price-swarm-queue.py`.
+
 **Plugin as trigger.** Declare `{type: 'action-trigger', name: 'onBarClick'}`,
 then call `client.config.triggerAction(config.onBarClick)` from your UI. The
 callback takes **no payload** — the workbook author wires up what happens. To
-convey *what* was clicked, write a `variable` first, then trigger.
+convey *what* was clicked, write a `variable` first, then trigger: the writes
+and the trigger are separate postMessages, a host applies them in the order
+posted, so fields-then-trigger is what lets the effects read the click.
+
+`triggerAction` takes the **config value**, not the panel name, and the host
+delivers that value as the bare `actionTriggerId` string — `validateConfigId`
+only `console.warn`s on `undefined`, so a wrong argument fails silently.
 
 **Plugin as target.** Declare `{type: 'action-effect', name: 'refresh'}` and
 register a handler:

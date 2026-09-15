@@ -221,6 +221,47 @@ def check_editor_panel(rep, builder, src_file):
     return cols
 
 
+def check_action_trigger_wired(rep, builder, src_file, src):
+    """An `action-trigger` and a `triggerAction()` call are two halves of one thing.
+
+    Standing rule: when a plugin causes a workbook action, the action fires from
+    the PLUGIN, not from a button or a control's on-change standing in for it
+    (`validate-spec.py` -> `plugin-owns-its-actions` enforces the workbook half).
+    That only works if the plugin declares the trigger and actually calls it,
+    and each half is silent without the other:
+
+    - `triggerAction()` with no `action-trigger` panel entry passes `undefined`,
+      and the SDK's only validation is a console warning nobody reads -- the
+      click does nothing.
+    - an `action-trigger` entry that is never called is a trigger the workbook
+      author can wire to an action that can never fire. Worse than useless: it
+      looks wired from the workbook side.
+    """
+    entries = builder.parse_editor_panel(src_file.read_text(encoding="utf-8",
+                                                            errors="replace"))
+    declared = [e.get("name") for e in (entries or [])
+                if e.get("type") == "action-trigger"]
+    calls = re.search(r"\btriggerAction\s*\(", src)
+
+    if not declared and not calls:
+        rep.skip("action-trigger-wired", "plugin triggers no workbook actions")
+        return
+    if calls and not declared:
+        rep.fail("action-trigger-wired",
+                 "calls triggerAction() but declares no `action-trigger` panel "
+                 "entry, so the argument is undefined -- the SDK only warns to "
+                 "the console and the action never fires")
+        return
+    if declared and not calls:
+        rep.fail("action-trigger-wired",
+                 "declares action-trigger %s but never calls triggerAction() -- "
+                 "a workbook can bind an action to it that nothing will ever fire"
+                 % ", ".join(repr(d) for d in declared))
+        return
+    rep.ok("action-trigger-wired",
+           "declares and fires action-trigger %s" % ", ".join(repr(d) for d in declared))
+
+
 def check_bindings_resolve(rep, cols, data_path):
     """Every declared column binding must find a column in the data.
 
@@ -446,6 +487,7 @@ def main():
     check_sdk_global(rep, src)
     check_resize_observer(rep, src)
     cols = check_editor_panel(rep, builder, src_file)
+    check_action_trigger_wired(rep, builder, src_file, src)
     check_bindings_resolve(rep, cols, args.data)
     check_vite_base(rep, plugin_dir)
     check_fallback_visible(rep, src)
