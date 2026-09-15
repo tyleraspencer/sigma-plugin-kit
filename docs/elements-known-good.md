@@ -167,6 +167,13 @@ declared in `configureEditorPanel`.
 }
 ```
 
+**`pluginId` is not validated on write.** An element whose `pluginId` does not
+resolve to a real plugin is accepted and round-trips intact -- it renders empty,
+with no error on any surface. Nothing in the write path checks it, so the id
+`register-plugin.sh` prints is the only confirmation you get that the one in the
+spec exists. Pasting a `pluginId` by hand is therefore a silent failure mode;
+let `pipeline.sh` carry it.
+
 ## plugin — bound to a control (a `variable` binding)
 
 A plugin's `variable` editor-panel entry binds through `config`, keyed by the
@@ -214,6 +221,28 @@ halves, taking the control's choices from a data column so every value the
 plugin can write is one the control already accepts. It refuses a BINDING the
 plugin's panel does not declare as a `variable`, because a mismatch there is
 silently absent from `config` rather than an error.
+
+### The canonical column form, and the check it slips past
+
+In the canonical column form, **`source` names another `config` key** -- the
+one holding the `{"kind":"element",...}` reference -- not an `elementId`. And a
+binding that takes several columns uses a **plural** key:
+
+```json
+"measures": { "kind": "column", "columnIds": ["col-revenue", "col-units"],
+              "source": "source" }
+```
+
+**`plugin-refs-resolve` goes dark on both.** Its column-binding check only
+inspects config values that are plain strings (`if not isinstance(value, str):
+continue`) -- the bare form this kit emits. A `{"kind":"column",...}` value is
+skipped entirely, `columnId` and `columnIds` alike, so a normalized config is
+carried past the one check that would catch a binding naming a column that
+does not exist. Re-`GET` a workbook after editing it in the UI and the
+validator has quietly stopped covering its plugin columns.
+
+Probed 2026-09-15: a spec with three bad bindings -- one bare string, one
+`columnId`, one `columnIds` -- reports exactly one `[FAIL]`, for the bare one.
 
 ## button
 
