@@ -273,6 +273,22 @@ favour of the Action API.
   dimensions before re-rendering** — the callback rewrites DOM inside the
   observed node, so an unguarded one loops forever (`preflight-plugin.py`'s
   `resize-observer-guard` fails it; the template has the shape to copy).
+
+  **Attach the observer from a callback ref, not a mount effect** — the trap
+  that shipped in `price-swarm` and was found by the author, not by a gate. A
+  plugin that renders an empty state until its rows arrive has no chart node
+  when a `useEffect(..., [])` runs, so the effect measures nothing and observes
+  only `document.body`. The chart node then mounts when the data lands, `body`
+  never changes size, no callback ever fires, and the plugin sits **blank until
+  the author resizes the window** — the one event that does resize `body`.
+  Re-measure whenever the node appears, and read again on the next frame and
+  once more after a beat, since the first sample inside a new iframe is `0`.
+
+  `verify-plugin-binding.py` **hides this**: its `fills-frame` probe resizes the
+  frame, which is exactly the event the broken version needs, so the harness
+  renders and passes. To reproduce Sigma's conditions, stub out the `probeFill`
+  call in a copy of the generated harness and check an `<svg>` appears with no
+  resize at all. Worth making the harness assert that on its own.
   Library-side: Recharts `<ResponsiveContainer>`, Plotly `responsive: true` +
   `layout.autosize` + `useResizeHandler`, ECharts `chart.resize()` on the tick,
   D3/canvas re-read `clientWidth`/`clientHeight` and re-scale every tick.
