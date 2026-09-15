@@ -142,27 +142,36 @@ Two hard requirements, both enforced by the script:
 A first Pages build routinely takes 30–60s and a brand-new path 404s until it
 lands, so the script polls rather than trusting the push.
 
-### What a deploy costs, and what it stops waiting for
+### What a deploy costs, and why the iterate loop is not a deploy
 
 Measured 2026-09-15 on a real bundle change: **44s total, of which 39.5s was
 GitHub Pages** — six poll attempts before it served the new bytes. Build and
 push were 4s; the two gates would have added 0.25s.
 
-That wait only ever protected **registration**: `url` is immutable on PATCH, so
+**A deploy waits for Pages on purpose.** `url` is immutable on PATCH, so
 registering a URL that does not serve means delete, re-create, a new
-`pluginId`, and every referencing workbook silently broken. A *re-deploy* has
-its registration already, so there is nothing left to protect — and
-`pipeline.sh` now passes `SIGMA_DEPLOY_NO_WAIT=1` whenever the cache holds a
-`plugin_id` and a `plugin_url` for this plugin's path. **44s → ~5s.**
+`pluginId`, and every referencing workbook silently broken — and shipping bytes
+you have not confirmed are live is how you end up debugging a stale bundle
+instead of your change. `SIGMA_DEPLOY_NO_WAIT=1` skips the wait; nothing sets it
+for you.
 
-A first deploy still waits. And skipping the wait can never register an
-unserved URL even if the prediction is wrong, because
-`register-plugin.sh create` independently refuses a URL that is not publicly
-fetchable as HTML.
+**So do not iterate through GitHub.** `pipeline.sh <name> --dev` serves the
+plugin from Vite in ~1s and the workbook element can point straight at it —
+nothing pushed, nothing public, edits hot-reloading. Deploy when the change
+should exist for other people, which is a different decision from "I want to
+see it". After the first build the pipeline refuses to choose for you: a bare
+re-run with a changed bundle exits 2 and lists `--dev` / `--ship` /
+`--redeploy` / `--deploy`.
 
-The cost is that the command returns before the bytes are live — propagation
-measured at ~48s afterwards. So reload the workbook a minute later, not
-immediately, and read the next section before concluding a deploy did nothing.
+Two things the dev path needs:
+
+- **One-time, per element, in the browser:** ••• → **Point to Development URL**
+  → `http://localhost:5173`. Nothing happens in the workbook until that is set,
+  and clearing it goes back to the deployed bundle.
+- **One plugin per port.** Vite serves whatever directory it was started in, so
+  a shared port shows you the wrong plugin while your edits appear to do
+  nothing. `--dev` records the owner and refuses a port another plugin holds;
+  `SIGMA_DEV_PORT` moves it.
 
 ### Why a deploy can look like it never happened
 

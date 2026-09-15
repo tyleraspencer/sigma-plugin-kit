@@ -51,9 +51,11 @@ agent editing this repo for some other reason doesn't step on one:
 - Ask the intake questions before scaffolding — data source and look-and-feel
   at minimum. Building first and asking later means a rebuild.
 - Use `scripts/pipeline.sh` rather than running the four steps by hand.
-- Editing a plugin that already shipped? Iterate on `npm run dev` against a
-  Sigma development URL, then `pipeline.sh <name> --redeploy`. Re-running the
-  full chain for a style change used to POST a duplicate workbook every time.
+- Editing a plugin that already shipped? **Ask where the change goes** — a
+  `--dev` session on localhost (invisible, instant, hot-reloading) or a GitHub
+  deploy (public, permanent, ~44s). `pipeline.sh` exits 2 rather than guess.
+  Never re-run the full chain for a style change; it used to POST a duplicate
+  workbook every time.
 
 ## Secrets
 
