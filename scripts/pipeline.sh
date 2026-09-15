@@ -264,7 +264,25 @@ fi
 # callable on its own and that is exactly how a broken plugin shipped once.
 # Step 2 just ran the full one, with --data, so tell it not to repeat itself.
 next_step "deploy"
+# Skip the Pages propagation wait when the URL we are deploying to is already
+# registered: the wait protects the register step, and on a re-deploy that step
+# has nothing left to protect. 44s -> ~5s on a real bundle change. A first
+# deploy still waits, because that is the run where the URL has to be proven
+# before it becomes a pluginId nobody can move.
+# The URL is not known until deploy returns, so predict it from the cache: a
+# remembered plugin_url for THIS plugin name, with a pluginId beside it, means
+# the last run deployed and registered that same path. If the prediction is
+# somehow wrong, the deploy is for a URL with no registration -- and
+# `register-plugin.sh create` independently refuses a URL that is not publicly
+# fetchable as HTML, so the worst case is a loud failure there, never a
+# registration pointing at nothing.
+no_wait=""
+case "$(state_get plugin_url)" in
+  */plugins/"$name"/index.html)
+    [ -n "$(state_get plugin_id)" ] && no_wait=1 ;;
+esac
 url="$(SIGMA_PREFLIGHT_DONE=1 SIGMA_PLUGIN_SRC_HASH="${src_hash:-}" \
+       SIGMA_DEPLOY_NO_WAIT="$no_wait" \
        bash scripts/deploy-plugin.sh "$name")"
 echo "  $url" >&2
 

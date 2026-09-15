@@ -291,6 +291,20 @@ fi
 # build history is readable. Never fatal -- the byte check below is the real
 # gate, this only stops us knocking early.
 if [ "$pushed" -eq 1 ] && command -v gh >/dev/null 2>&1; then
+  if [ -n "${SIGMA_DEPLOY_NO_WAIT:-}" ]; then
+    # The wait below exists to protect REGISTRATION: `url` is immutable on
+    # PATCH, so registering a URL that does not serve means delete, re-create,
+    # a new pluginId and every referencing workbook silently broken. When the
+    # caller already has a registration for this exact URL, that risk is
+    # already spent -- the URL is proven, and all the wait buys is watching
+    # GitHub propagate. Measured on a real bundle change: 39.5s of a 44s
+    # deploy, which is 90% of it.
+    echo "  pushed. Pages is still propagating (~40s) -- not waiting." >&2
+    echo "  The workbook picks the new bundle up on its next load after that;" >&2
+    echo "  see docs/plugins.md -> 'Why a deploy can look like it never happened'." >&2
+    printf '%s\n' "$url"
+    exit 0
+  fi
   echo "Waiting for the Pages build ..." >&2
   pages_wait=0
   while [ "$pages_wait" -lt 20 ]; do
