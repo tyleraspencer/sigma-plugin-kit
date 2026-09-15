@@ -491,7 +491,7 @@ It is geocoded, which makes it the one to reach for whenever the plugin is
 map-shaped. It only exists in orgs that have the sample connection — check
 with `list-connections.sh` before offering it anywhere but the default org.
 
-### Generated rows, and why input tables still don't work
+### Generated rows, and why input tables cannot be seeded
 
 Generated mode compiles your rows into a `SELECT ... FROM (VALUES ...)`
 literal and publishes it as a `kind: "sql"` table element, so the data lives
@@ -501,13 +501,15 @@ in the workbook spec. Shape: [elements-known-good.md](elements-known-good.md)
 This is the **only** API route for fabricated rows. The two obvious
 alternatives are both closed:
 
-- **Input tables cannot be written from code.** `insert-rows` is a runtime
-  action effect (one row per effect) and is rejected outright by the spec API —
-  bisected against a known-good baseline, where the same button carrying
-  `set-control-value` publishes fine. `rows`, `data`, `seedData`, `values` and
-  `initialRows` on an `input-table` element are all silently dropped. There is
-  no REST write endpoint either: nothing in Sigma's published OpenAPI spec
-  matches `input` or `row`.
+- **Input tables cannot be *seeded* from code.** `rows`, `data`, `seedData`,
+  `values` and `initialRows` on an `input-table` element are all silently
+  dropped, and there is no REST write endpoint: nothing in Sigma's published
+  OpenAPI spec matches `input` or `row`. An `insert-rows` action effect *does*
+  publish (corrected 2026-09-15 — the earlier "rejected outright" finding was a
+  wrong field name; see
+  [elements-known-good.md](elements-known-good.md) → "input-table, and
+  insert-rows"), but it is a **runtime** effect: it needs a user to click
+  something, so it cannot put rows in a workbook you are about to hand over.
 - **No CSV upload.** `/v2/files` POST creates folders and documents only, so
   the `source: {kind: "csv-table", inodeId}` used by CSV-backed elements can't
   be produced from the API.
@@ -515,6 +517,12 @@ alternatives are both closed:
 So an input table publishes **empty**, a plugin bound to it falls through to
 its own synthetic fallback, and you ship a chart whose numbers are hardcoded
 in the HTML while looking entirely real.
+
+An input table a plugin *writes into* is a different thing and does work: bind
+the plugin's `variable` entries to scratch controls, hang an `insert-rows`
+action off the last-written control's `on-change`, and every click appends a
+row. `plugins/price-swarm` is the worked example -- but the rows arrive from
+clicks, so the data the plugin *reads* still has to come from somewhere else.
 
 ## Verifying, and the failures that hide
 
