@@ -135,9 +135,17 @@ generates a different spec, which counts as a change and republishes.
 `--new-workbook` forces a second workbook; `--workbook-id <id>` re-attaches one
 the kit has lost track of.
 
-**Neither `--ship` nor `--redeploy` buys wall clock** — the gates cost 0.25s
-between them and the only real wait in a deploy is GitHub Pages. They buy fewer
-moving parts.
+**Where the time actually goes** (measured, real bundle change): build + push
+4s, GitHub Pages propagation ~40s, gates 0.25s, everything else under a second.
+So a re-deploy **does not wait for Pages** — the wait only ever protected
+registration, and a re-deploy has a registration already. `--ship` and
+`--redeploy` both return in **~5s**, and the bytes land about 40s later. The
+gates are 0.6% of a deploy; skipping them buys clarity, not time.
+
+Two consequences worth saying out loud to whoever asked for the change:
+**reload the workbook a minute after the command returns, not immediately**,
+and a first deploy still waits, because that is the run where the URL has to be
+proven before it becomes a `pluginId` nobody can move.
 
 **A workbook assembled by post-processing a generated spec must not be
 regenerated** — the generator cannot see hand-added elements, so a regenerating

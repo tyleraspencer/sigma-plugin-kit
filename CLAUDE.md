@@ -25,7 +25,9 @@ agent editing this repo for some other reason doesn't step on one:
   plugin never uses — both read `undefined` and render the fallback forever.
   (`docs/plugin-api.md` → "Getting the SDK".)
 - Deploy before registering — `PATCH /v2/plugins/{id}` cannot change `url`.
-  (`docs/plugins.md` → "3. Register".)
+  (`docs/plugins.md` → "3. Register".) A **re-deploy** does not wait for Pages
+  (that wait only protected registration), so it returns in ~5s and the bytes
+  land ~40s later — reload the workbook a minute after, not immediately.
 - Plugin hosting must be a **public** repo; this one is private on purpose.
 - Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.

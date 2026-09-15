@@ -142,6 +142,28 @@ Two hard requirements, both enforced by the script:
 A first Pages build routinely takes 30–60s and a brand-new path 404s until it
 lands, so the script polls rather than trusting the push.
 
+### What a deploy costs, and what it stops waiting for
+
+Measured 2026-09-15 on a real bundle change: **44s total, of which 39.5s was
+GitHub Pages** — six poll attempts before it served the new bytes. Build and
+push were 4s; the two gates would have added 0.25s.
+
+That wait only ever protected **registration**: `url` is immutable on PATCH, so
+registering a URL that does not serve means delete, re-create, a new
+`pluginId`, and every referencing workbook silently broken. A *re-deploy* has
+its registration already, so there is nothing left to protect — and
+`pipeline.sh` now passes `SIGMA_DEPLOY_NO_WAIT=1` whenever the cache holds a
+`plugin_id` and a `plugin_url` for this plugin's path. **44s → ~5s.**
+
+A first deploy still waits. And skipping the wait can never register an
+unserved URL even if the prediction is wrong, because
+`register-plugin.sh create` independently refuses a URL that is not publicly
+fetchable as HTML.
+
+The cost is that the command returns before the bytes are live — propagation
+measured at ~48s afterwards. So reload the workbook a minute later, not
+immediately, and read the next section before concluding a deploy did nothing.
+
 ### Why a deploy can look like it never happened
 
 Pages serves `index.html` and the bundle with `Cache-Control: max-age=600`, and
