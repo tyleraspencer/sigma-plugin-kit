@@ -28,7 +28,9 @@ agent editing this repo for some other reason doesn't step on one:
   (`docs/plugins.md` → "3. Register".) A **re-deploy** does not wait for Pages
   (that wait only protected registration), so it returns in ~5s and the bytes
   land ~40s later — reload the workbook a minute after, not immediately.
-- Plugin hosting must be a **public** repo; this one is private on purpose.
+- Plugin hosting stays a **separate** repo (`tyleraspencer/sigma-plugins`):
+  it is the single source of truth for deployed plugin HTML, and the kit
+  tracks no copy of it.
 - Fabricated rows go in a `kind:"sql"` VALUES literal; never an input table.
 - Copy element shapes from `docs/elements-known-good.md`; never invent fields.
 - A plugin fills 100% of its iframe and re-lays-out on resize — no fixed px,

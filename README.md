@@ -136,9 +136,10 @@ forever, looking fine in a screenshot while never binding a real column.
 serves *before* registering. Getting it wrong means delete + re-create, a new
 `pluginId`, and every workbook referencing the old one silently broken.
 
-**Hosting must be a separate public repo.** Sigma fetches the plugin URL
-anonymously into an iframe, so a private repo's Pages output will not serve.
-This toolkit is private; plugins deploy to `tyleraspencer/sigma-plugins`.
+**Hosting is a separate public repo.** Sigma fetches the plugin URL
+anonymously into an iframe, so whatever serves it must be public. Plugins
+deploy to `tyleraspencer/sigma-plugins`, which stays separate from this kit
+so there is exactly one copy of any deployed plugin's HTML.
 Use GitHub Pages, not jsDelivr — jsDelivr serves `.html` as `text/plain`.
 
 ## Data

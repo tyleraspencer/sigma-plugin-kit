@@ -68,12 +68,19 @@ window.SigmaPlugin a bare {}, and the plugin renders its fallback forever.
 No code was copied from millersigma; plugins/_react-template/ is written from
 scratch.
 
-LICENSING STATUS: neither upstream repository publishes a LICENSE file, so no
-license has been granted for redistribution or modification of that code.
-This repository is therefore PRIVATE and is not distributed. Do not make it
-public, publish it to a plugin marketplace, or share it outside its current
-access list without the upstream authors' explicit permission and an agreed
-license.
+LICENSING STATUS: this repository is PUBLIC as of 2026-09-18, distributed
+under the MIT License in LICENSE.
+
+Neither upstream repository publishes a LICENSE file of its own. Permission to
+redistribute the inherited code described above was granted by the upstream
+authors, per the repo owner on 2026-09-18. That grant arrived out of band and
+is not evidenced anywhere in this tree -- RECORD IT HERE, with the date, the
+channel and who agreed, the same way the upstream syncs above are recorded, so
+nobody downstream has to take this paragraph on faith.
+
+MIT applies to this repository as distributed. It is not a relicensing of the
+inherited code: copyright in those portions stays with the authors named
+above, and the attributions in this file travel with any copy.
 
 Note that the plugin HOST repo (tyleraspencer/sigma-plugins) is public by
 necessity -- Sigma must fetch a plugin URL anonymously. Only first-party

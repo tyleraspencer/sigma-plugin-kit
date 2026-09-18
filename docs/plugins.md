@@ -131,9 +131,9 @@ asset paths.
 Two hard requirements, both enforced by the script:
 
 - **The host repo must be public.** Sigma fetches the URL anonymously to render
-  the iframe, so a private repo's Pages output will not serve. This toolkit is
-  private, which is exactly why hosting lives in a separate public repo
-  (`tyleraspencer/sigma-plugins` by default; override with
+  the iframe, so a private repo's Pages output will not serve. Hosting lives in
+  its own repo rather than this one so a deployed plugin's HTML has a single
+  home (`tyleraspencer/sigma-plugins` by default; override with
   `SIGMA_PLUGIN_HOST_REPO` / `SIGMA_PLUGIN_HOST_URL`).
 - **Serve from GitHub Pages, not jsDelivr.** jsDelivr returns `.html` as
   `text/plain`, which renders the plugin as raw source text and hangs PNG
