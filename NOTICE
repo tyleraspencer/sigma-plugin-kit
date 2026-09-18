@@ -78,6 +78,9 @@ is not evidenced anywhere in this tree -- RECORD IT HERE, with the date, the
 channel and who agreed, the same way the upstream syncs above are recorded, so
 nobody downstream has to take this paragraph on faith.
 
+LICENSE is canonical MIT text with nothing added, so GitHub detects it;
+the provenance above is this file's job, not the license file's.
+
 MIT applies to this repository as distributed. It is not a relicensing of the
 inherited code: copyright in those portions stays with the authors named
 above, and the attributions in this file travel with any copy.
